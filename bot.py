@@ -1,5 +1,6 @@
 import os
 import datetime
+import requests
 import telebot
 from telebot import types
 import database
@@ -7,6 +8,7 @@ import database
 # Retrieve configuration from environment variables
 API_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID_STR = os.environ.get("ADMIN_ID")
+CRYPTO_PAY_TOKEN = os.environ.get("CRYPTO_PAY_TOKEN")
 
 if not API_TOKEN or not ADMIN_ID_STR:
     raise ValueError("Missing BOT_TOKEN or ADMIN_ID environment variables.")
@@ -33,12 +35,51 @@ def check_telegram_membership(chat_id_or_username, user_id):
         print(f"Error checking membership: {e}")
         return False
 
+def send_crypto_pay_transfer(target_user_id, amount_usdt):
+    """
+    Sends off-chain USDT directly to a user's Telegram ID via Crypto Pay.
+    Returns (True, "Success details") or (False, "Error message")
+    """
+    if not CRYPTO_PAY_TOKEN:
+        return False, "Crypto Pay API token is not configured."
+
+    # For testing, you can use: https://testnet-pay.cryptoboot.ru/api/transfer
+    # For live mainnet, use: https://pay.cryptoboot.ru/api/transfer
+    url = "https://pay.cryptoboot.ru/api/transfer"
+    
+    headers = {
+        "Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN,
+        "Content-Type": "application/json"
+    }
+    
+    # Generate a unique spend ID to prevent duplicate requests
+    spend_id = f"withdraw_{target_user_id}_{int(datetime.datetime.now().timestamp())}"
+    
+    data = {
+        "user_id": target_user_id,
+        "asset": "USDT",
+        "amount": str(round(amount_usdt, 4)),
+        "spend_id": spend_id
+    }
+    
+    try:
+        response = requests.post(url, json=data, headers=headers, timeout=10)
+        res_data = response.json()
+        
+        if response.status_code == 200 and res_data.get("ok"):
+            return True, "Payment sent successfully."
+        else:
+            error_msg = res_data.get("error", {}).get("name", "Unknown Error")
+            return False, error_msg
+    except Exception as e:
+        return False, str(e)
+
 # --- KEYBOARDS ---
 def main_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("📋 View Tasks", "💰 My Balance")
     markup.add("🎁 Daily Bonus", "🔗 Referral Link")
-    markup.add("💳 Set Wallet", "📤 Withdraw")
+    markup.add("📤 Withdraw")
     markup.add("💬 Contact Support")
     if is_admin(user_id):
         markup.add("🛠 Admin Panel")
@@ -100,7 +141,6 @@ def send_welcome(message):
 
 @bot.message_handler(func=lambda message: message.text == "📋 View Tasks")
 def view_tasks(message):
-    # Only pull tasks where active limit has not been reached
     tasks = database.fetch_query(
         "SELECT id, description, reward, max_claims, claims_count FROM tasks WHERE is_active = 1 AND claims_count < max_claims"
     )
@@ -122,26 +162,14 @@ def view_tasks(message):
 @bot.message_handler(func=lambda message: message.text == "💰 My Balance")
 def check_balance(message):
     user_id = message.from_user.id
-    user = database.fetch_query("SELECT balance, wallet_address FROM users WHERE user_id = ?", (user_id,))
+    user = database.fetch_query("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     if user:
-        balance, wallet = user[0]
-        wallet_str = wallet if wallet else "Not Set"
+        balance = user[0][0]
         bot.send_message(
             message.chat.id, 
-            f"**Your Balance:** {balance:.2f} USDT\n**USDT (TRC-20) Wallet:** `{wallet_str}`",
+            f"**Your Balance:** {balance:.2f} USDT\n\nPayments are processed instantly directly to your Telegram `@CryptoBot` wallet.",
             parse_mode="Markdown"
         )
-
-@bot.message_handler(func=lambda message: message.text == "💳 Set Wallet")
-def prompt_wallet(message):
-    bot.send_message(message.chat.id, "Please enter your USDT (TRC-20) wallet address:")
-    bot.register_next_step_handler(message, save_wallet)
-
-def save_wallet(message):
-    user_id = message.from_user.id
-    wallet = message.text.strip()
-    database.execute_query("UPDATE users SET wallet_address = ? WHERE user_id = ?", (wallet, user_id))
-    bot.send_message(message.chat.id, f"Wallet address saved: `{wallet}`", parse_mode="Markdown")
 
 # --- DAILY CHECK-IN SYSTEM ---
 @bot.message_handler(func=lambda message: message.text == "🎁 Daily Bonus")
@@ -209,7 +237,6 @@ def send_support_message_to_admin(message):
         bot.send_message(message.chat.id, "Invalid text. Support request canceled.")
         return
 
-    # Send directly to admin
     bot.send_message(
         ADMIN_ID,
         f"📩 **New Support Ticket**\n\n"
@@ -257,12 +284,10 @@ def handle_submit_request(call):
         
     description, reward, max_claims, claims_count = task[0]
     
-    # Check claim limits before accepting submissions
     if claims_count >= max_claims:
         bot.send_message(user_id, "❌ Sorry, this task has already reached its maximum claims limit.")
         return
     
-    # Automated Telegram check
     if description.strip().upper().startswith("JOIN:"):
         target_channel = description.replace("JOIN:", "").strip()
         bot.send_message(user_id, f"Verifying membership for {target_channel}...")
@@ -311,34 +336,40 @@ def process_submission(message, task_id):
     )
     bot.send_message(message.chat.id, "Submission received. An admin will review it shortly.")
 
-# --- WITHDRAWAL ---
+# --- AUTOMATED WITHDRAWAL ---
 @bot.message_handler(func=lambda message: message.text == "📤 Withdraw")
 def withdraw_request(message):
     user_id = message.from_user.id
-    user = database.fetch_query("SELECT balance, wallet_address FROM users WHERE user_id = ?", (user_id,))
+    user = database.fetch_query("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     
     if not user:
         return
         
-    balance, wallet = user[0]
-    if not wallet:
-        bot.send_message(message.chat.id, "Please set your wallet address first using 'Set Wallet'.")
-        return
-        
-    if balance <= 0:
-        bot.send_message(message.chat.id, "Your balance is insufficient for withdrawal.")
-        return
-        
-    bot.send_message(message.chat.id, f"Processing withdrawal of {balance:.2f} USDT to wallet `{wallet}`...", parse_mode="Markdown")
+    balance = user[0][0]
     
-    # Placeholder for real API Integration (e.g., NOWPayments/CryptoPay)
-    success = True 
+    if balance <= 0:
+        bot.send_message(message.chat.id, "❌ Your balance is insufficient for withdrawal.")
+        return
+        
+    bot.send_message(message.chat.id, f"Sending {balance:.4f} USDT directly to your Telegram @CryptoBot account...")
+    
+    # Process the transaction through Crypto Bot API
+    success, reason = send_crypto_pay_transfer(user_id, balance)
     
     if success:
+        # Deduct balance on database only if transaction succeeds
         database.execute_query("UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,))
-        bot.send_message(message.chat.id, "Withdrawal successful! Your balance has been updated.")
+        bot.send_message(
+            message.chat.id, 
+            f"✅ **Withdrawal Successful!**\n\n{balance:.4f} USDT has been credited to your @CryptoBot account. Open the app to view your balance.",
+            parse_mode="Markdown"
+        )
     else:
-        bot.send_message(message.chat.id, "Withdrawal failed. Please contact support.")
+        bot.send_message(
+            message.chat.id, 
+            f"❌ **Withdrawal Failed.**\n\nReason: `{reason}`\n\nPlease try again later or contact support.",
+            parse_mode="Markdown"
+        )
 
 # --- ADMIN PANEL ---
 @bot.message_handler(func=lambda message: message.text == "🛠 Admin Panel" and is_admin(message.from_user.id))
@@ -442,7 +473,6 @@ def handle_review_decision(call):
         reward = float(parts[3])
         task_id = int(parts[4])
         
-        # Double check task limits again before final credit
         task = database.fetch_query("SELECT max_claims, claims_count FROM tasks WHERE id = ?", (task_id,))
         if task:
             max_claims, claims_count = task[0]
