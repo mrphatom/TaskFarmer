@@ -124,21 +124,21 @@ def send_welcome(message):
             try:
                 bot.send_message(
                     referred_by, 
-                    f"🤝 **New Referral Partner!**\n━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🤝 <b>New Referral Partner!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
                     f"@{username} has joined via your referral link.\n"
-                    f"💰 **Token Allocation:** `+{ref_reward:.2f} USDT`",
-                    parse_mode="Markdown"
+                    f"💰 <b>Token Allocation:</b> <code>+{ref_reward:.2f} USDT</code>",
+                    parse_mode="HTML"
                 )
             except Exception as e:
                 print(f"Failed to notify referrer: {e}")
     
     welcome_text = (
-        f"⚡ **TaskFarmer Web3 Portal** ⚡\n"
+        f"⚡ <b>TaskFarmer Web3 Portal</b> ⚡\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Maximize your earnings by participating in crypto quests, "
         f"completing interactive daily claims, and growing your referral network.\n\n"
-        f"💎 **Instant Settlements:** Earned yields are settled instantly in USDT "
-        f"directly to your `@CryptoBot` wallet on Telegram.\n"
+        f"💎 <b>Instant Settlements:</b> Earned yields are settled instantly in USDT "
+        f"directly to your <code>@CryptoBot</code> wallet on Telegram.\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Access the options below to initialize your dashboard."
     )
@@ -147,8 +147,18 @@ def send_welcome(message):
         message.chat.id, 
         welcome_text, 
         reply_markup=main_keyboard(user_id),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
+
+@bot.message_handler(commands=['help'])
+def send_help_info(message):
+    help_text = (
+        "ℹ️ <b>TaskFarmer Help Guide</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        "• Tap <b>💎 Explore Quests</b> to find active contract pools.\n"
+        "• Tap <b>📤 Withdraw USDT</b> to instantly claim yields directly to <code>@CryptoBot</code>.\n"
+        "• Having issues? Tap <b>💬 Support Desk</b> to reach the administrative team."
+    )
+    bot.send_message(message.chat.id, help_text, parse_mode="HTML")
 
 @bot.message_handler(func=lambda message: message.text == "💎 Explore Quests")
 def view_tasks(message):
@@ -158,11 +168,16 @@ def view_tasks(message):
     if not tasks:
         bot.send_message(
             message.chat.id, 
-            "🌐 **No Quests Available**\n━━━━━━━━━━━━━━━━━━━━\nAll standard pools are currently filled. Check back shortly for new contract deployments."
+            "🌐 <b>No Quests Available</b>\n━━━━━━━━━━━━━━━━━━━━\nAll standard pools are currently filled. Check back shortly for new contract deployments.",
+            parse_mode="HTML"
         )
         return
     
-    bot.send_message(message.chat.id, "📊 **Active Decentralized Quests**\n━━━━━━━━━━━━━━━━━━━━")
+    bot.send_message(
+        message.chat.id, 
+        "📊 <b>Active Decentralized Quests</b>\n━━━━━━━━━━━━━━━━━━━━",
+        parse_mode="HTML"
+    )
     
     for task in tasks:
         task_id, desc, reward, max_claims, claims_count = task
@@ -170,18 +185,21 @@ def view_tasks(message):
         markup.add(types.InlineKeyboardButton("Submit Proof", callback_data=f"submit_{task_id}"))
         
         task_card = (
-            f"📋 **Quest ID: #{task_id}**\n\n"
-            f"📝 **Requirements:**\n{desc}\n\n"
-            f"💰 **Allocation:** `{reward:.2f} USDT`\n"
-            f"👥 **Pool Status:** {claims_count} / {max_claims} spots filled"
+            f"📋 <b>Quest ID: #{task_id}</b>\n\n"
+            f"📝 <b>Requirements:</b>\n{desc}\n\n"
+            f"💰 <b>Allocation:</b> <code>{reward:.2f} USDT</code>\n"
+            f"👥 <b>Pool Status:</b> {claims_count} / {max_claims} spots filled"
         )
         
-        bot.send_message(
-            message.chat.id, 
-            task_card, 
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
+        try:
+            bot.send_message(
+                message.chat.id, 
+                task_card, 
+                parse_mode="HTML",
+                reply_markup=markup
+            )
+        except Exception as e:
+            print(f"Failed to send task card: {e}")
 
 @bot.message_handler(func=lambda message: message.text == "💼 Web3 Wallet")
 def check_balance(message):
@@ -190,16 +208,16 @@ def check_balance(message):
     if user:
         balance = user[0][0]
         wallet_card = (
-            f"💼 **TaskFarmer Dashboard**\n"
+            f"💼 <b>TaskFarmer Dashboard</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 **Available Balance:** `{balance:.2f} USDT`\n\n"
-            f"🔐 *Secure off-chain execution allows seamless transfers straight "
-            f"into your `@CryptoBot` account.*"
+            f"📊 <b>Available Balance:</b> <code>{balance:.2f} USDT</code>\n\n"
+            f"🔐 <i>Secure off-chain execution allows seamless transfers straight "
+            f"into your @CryptoBot account.</i>"
         )
         bot.send_message(
             message.chat.id, 
             wallet_card,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 # --- DAILY CHECK-IN SYSTEM ---
@@ -216,7 +234,8 @@ def claim_daily_bonus(message):
     if check_in_count >= 5:
         bot.send_message(
             message.chat.id, 
-            "🔒 **Allocation Exceeded**\n━━━━━━━━━━━━━━━━━━━━\nYou have completed all 5 allocations of your early supporter program."
+            "🔒 <b>Allocation Exceeded</b>\n━━━━━━━━━━━━━━━━━━━━\nYou have completed all 5 allocations of your early supporter program.",
+            parse_mode="HTML"
         )
         return
         
@@ -225,7 +244,8 @@ def claim_daily_bonus(message):
     if last_check_in == today_str:
         bot.send_message(
             message.chat.id, 
-            "⏳ **Cooldown Active**\n━━━━━━━━━━━━━━━━━━━━\nYour daily reward allocation resets in 24 hours. Check back tomorrow."
+            "⏳ <b>Cooldown Active</b>\n━━━━━━━━━━━━━━━━━━━━\nYour daily reward allocation resets in 24 hours. Check back tomorrow.",
+            parse_mode="HTML"
         )
         return
         
@@ -238,16 +258,16 @@ def claim_daily_bonus(message):
     )
     
     success_text = (
-        f"⚡ **Daily Reward Claimed!**\n"
+        f"⚡ <b>Daily Reward Claimed!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📈 **Milestone:** Day {new_count} / 5\n"
-        f"💰 **Credit:** `+{reward:.2f} USDT`"
+        f"📈 <b>Milestone:</b> Day {new_count} / 5\n"
+        f"💰 <b>Credit:</b> <code>+{reward:.2f} USDT</code>"
     )
     
     bot.send_message(
         message.chat.id, 
         success_text,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 # --- REFERRAL SYSTEM ---
@@ -259,18 +279,18 @@ def send_referral_link(message):
     ref_link = f"https://t.me/{bot_username}?start={user_id}"
     
     ref_card = (
-        f"👥 **Web3 Referral Network**\n"
+        f"👥 <b>Web3 Referral Network</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Expand the TaskFarmer ecosystem and earn rewards whenever new users "
         f"register using your partner link.\n\n"
-        f"💰 **Partner Fee:** `0.16 USDT` per user\n\n"
-        f"🔗 **Your Partner Link:**\n`{ref_link}`"
+        f"💰 <b>Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
+        f"🔗 <b>Your Partner Link:</b>\n<code>{ref_link}</code>"
     )
     
     bot.send_message(
         message.chat.id,
         ref_card,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 # --- SUPPORT SYSTEM ---
@@ -278,8 +298,9 @@ def send_referral_link(message):
 def prompt_support_message(message):
     bot.send_message(
         message.chat.id, 
-        "💬 **Helpdesk Terminal**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "State your issue or inquiry below. A support technician will review your submission."
+        "💬 <b>Helpdesk Terminal</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        "State your issue or inquiry below. A support technician will review your submission.",
+        parse_mode="HTML"
     )
     bot.register_next_step_handler(message, send_support_message_to_admin)
 
@@ -292,18 +313,22 @@ def send_support_message_to_admin(message):
         bot.send_message(message.chat.id, "Inquiry invalid. Ticket creation terminated.")
         return
 
+    # Escaping HTML tags from user input to prevent parsing failures
+    safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
+
     bot.send_message(
         ADMIN_ID,
-        f"📩 **New Ticket Received**\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 **User:** @{username} (`{user_id}`)\n"
-        f"📝 **Details:** {text}\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"Reply using: `/reply {user_id} <message>`",
-        parse_mode="Markdown"
+        f"📩 <b>New Ticket Received</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>User:</b> @{username} (<code>{user_id}</code>)\n"
+        f"📝 <b>Details:</b> {safe_text}\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"Reply using: <code>/reply {user_id} &lt;message&gt;</code>",
+        parse_mode="HTML"
     )
     bot.send_message(
         message.chat.id, 
-        "✅ **Ticket Created**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Your inquiry has been logged. An administrator will reply to your inbox directly."
+        "✅ <b>Ticket Created</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        "Your inquiry has been logged. An administrator will reply to your inbox directly.",
+        parse_mode="HTML"
     )
 
 @bot.message_handler(commands=['reply'])
@@ -313,7 +338,7 @@ def admin_reply_support(message):
         
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.send_message(message.chat.id, "Format error. Use: `/reply <user_id> <message>`", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "Format error. Use: <code>/reply &lt;user_id&gt; &lt;message&gt;</code>", parse_mode="HTML")
         return
         
     try:
@@ -322,9 +347,9 @@ def admin_reply_support(message):
         
         bot.send_message(
             target_user_id,
-            f"💬 **Inbound Support Dispatch:**\n━━━━━━━━━━━━━━━━━━━━\n{reply_text}"
+            f"💬 <b>Inbound Support Dispatch:</b>\n━━━━━━━━━━━━━━━━━━━━\n{reply_text}"
         )
-        bot.send_message(message.chat.id, f"Reply transmitted to user `{target_user_id}`.")
+        bot.send_message(message.chat.id, f"Reply transmitted to user <code>{target_user_id}</code>.", parse_mode="HTML")
     except Exception as e:
         bot.send_message(message.chat.id, f"Failed to deliver message: {e}")
 
@@ -377,21 +402,24 @@ def handle_submit_request(call):
             )
             bot.send_message(
                 user_id, 
-                f"✅ **Quest Verification Successful!**\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"`{reward:.2f} USDT` has been settled in your Web3 Wallet."
+                f"✅ <b>Quest Verification Successful!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>{reward:.2f} USDT</code> has been settled in your Web3 Wallet.",
+                parse_mode="HTML"
             )
         else:
             bot.send_message(
                 user_id, 
-                f"❌ **Identity Unverified**\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"Verification failed for {target_channel}. Join the target space, then retry."
+                f"❌ <b>Identity Unverified</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"Verification failed for {target_channel}. Join the target space, then retry.",
+                parse_mode="HTML"
             )
             
     else:
         bot.send_message(
             user_id, 
-            f"ℹ️ **Manual Proof Required**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"Please submit the verification proof (screenshot link, transaction hash, or username) below:"
+            f"ℹ️ <b>Manual Proof Required</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"Please submit the verification proof (screenshot link, transaction hash, or username) below:",
+            parse_mode="HTML"
         )
         bot.register_next_step_handler(call.message, process_submission, task_id)
 
@@ -399,14 +427,18 @@ def process_submission(message, task_id):
     user_id = message.from_user.id
     proof = message.text if message.text else "Binary proof submitted"
     
+    # Escaping HTML tags from proof inputs
+    safe_proof = proof.replace("<", "&lt;").replace(">", "&gt;")
+
     database.execute_query(
         "INSERT INTO submissions (user_id, task_id, proof) VALUES (?, ?, ?)",
-        (user_id, task_id, proof)
+        (user_id, task_id, safe_proof)
     )
     bot.send_message(
         message.chat.id, 
-        "✅ **Proof Registered**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Your quest proof is queued. Auditors will process it shortly."
+        "✅ <b>Proof Registered</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        "Your quest proof is queued. Auditors will process it shortly.",
+        parse_mode="HTML"
     )
 
 # --- WITHDRAWAL ---
@@ -432,18 +464,18 @@ def withdraw_request(message):
         database.execute_query("UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,))
         bot.send_message(
             message.chat.id, 
-            f"✅ **Withdrawal Confirmed!**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"**Transferred:** `{balance:.4f} USDT`\n"
-            f"Your funds are settled. Open `@CryptoBot` to interact with your balance.",
-            parse_mode="Markdown"
+            f"✅ <b>Withdrawal Confirmed!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"**Transferred:** <code>{balance:.4f} USDT</code>\n"
+            f"Your funds are settled. Open @CryptoBot to interact with your balance.",
+            parse_mode="HTML"
         )
     else:
         bot.send_message(
             message.chat.id, 
-            f"❌ **Transaction Rejected**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"The network returned an execution error:\n`{reason}`\n\n"
+            f"❌ <b>Transaction Rejected</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"The network returned an execution error:\n<code>{reason}</code>\n\n"
             f"Review your settings or submit a helpdesk ticket.",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 # --- ADMIN PANEL ---
@@ -451,9 +483,10 @@ def withdraw_request(message):
 def admin_panel(message):
     bot.send_message(
         message.chat.id, 
-        "⚙️ **TaskFarmer Administration Console**\n━━━━━━━━━━━━━━━━━━━━\n"
+        "⚙️ <b>TaskFarmer Administration Console</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         "Deploy contracts, audit quest entries, and broadcast global system notifications.", 
-        reply_markup=admin_keyboard()
+        reply_markup=admin_keyboard(),
+        parse_mode="HTML"
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_task")
@@ -505,7 +538,7 @@ def admin_broadcast_process(message):
     for u in users:
         target_id = u[0]
         try:
-            bot.send_message(target_id, f"📢 **System Broadcast**\n━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", parse_mode="Markdown")
+            bot.send_message(target_id, f"📢 <b>System Broadcast</b>\n━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", parse_mode="HTML")
             success_count += 1
         except Exception:
             fail_count += 1
@@ -535,11 +568,11 @@ def admin_review_submissions(call):
         bot.send_message(
             call.message.chat.id,
             f"**Verification Ticket #{sub_id}**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 **User ID:** `{user_id}`\n"
+            f"👤 **User ID:** <code>{user_id}</code>\n"
             f"📋 **Quest Details:** {desc}\n"
             f"📝 **Client Proof:** {proof}\n"
-            f"💰 **Pool Allocation:** `{reward:.2f} USDT`",
-            parse_mode="Markdown",
+            f"💰 **Pool Allocation:** <code>{reward:.2f} USDT</code>",
+            parse_mode="HTML",
             reply_markup=markup
         )
 
@@ -570,7 +603,8 @@ def handle_review_decision(call):
                 user_id, 
                 f"🎉 **Quest Approved!**\n━━━━━━━━━━━━━━━━━━━━\n"
                 f"Ticket #{sub_id} passed validation.\n"
-                f"💰 **Token Credit:** `{reward:.2f} USDT`"
+                f"💰 **Token Credit:** <code>{reward:.2f} USDT</code>",
+                parse_mode="HTML"
             )
         except Exception as e:
             print(f"Could not notify user {user_id}: {e}")
