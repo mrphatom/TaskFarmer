@@ -39,6 +39,10 @@ except ValueError:
 bot = telebot.TeleBot(API_TOKEN)
 database.init_db()
 
+# In-memory store for incomplete task creation flows
+# Keyed by admin's chat_id to prevent database pollution
+pending_tasks = {}
+
 # --- HELPER FUNCTIONS ---
 def is_admin(user_id):
     return user_id == ADMIN_ID
@@ -453,6 +457,7 @@ def admin_reply_support(message):
 # --- SUBMISSION FLOW ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("submit_"))
 def handle_submit_request(call):
+    bot.answer_callback_query(call.id) # Dismiss spinner instantly
     task_id = int(call.data.split("_")[1])
     user_id = call.message.chat.id
     
@@ -627,136 +632,194 @@ def admin_panel(message):
         parse_mode="HTML"
     )
 
-# Create Quest - Step 1: Get description
+# --- ADMIN: CREATE QUEST FLOW ---
+
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_task")
 def admin_add_task_start(call):
+    bot.answer_callback_query(call.id)  # Answer callback to dismiss loading spinner
     bot.send_message(
-        call.message.chat.id, "Enter task description:"
+        call.message.chat.id, 
+        "Enter task description (use 'JOIN: @username' for automated Telegram checks):"
     )
     bot.register_next_step_handler(call.message, admin_add_task_desc)
 
-# Create Quest - Step 2: Get reward
 def admin_add_task_desc(message):
     desc = message.text
+    if not desc or not desc.strip():
+        bot.send_message(
+            message.chat.id, 
+            "❌ Description cannot be empty. Task creation canceled."
+        )
+        return
     bot.send_message(
-        message.chat.id, "Enter reward amount (numbers only):"
+        message.chat.id, 
+        "Enter reward amount (in USDT, numbers only):"
     )
     bot.register_next_step_handler(message, admin_add_task_reward, desc)
 
-# Create Quest - Step 3: Get global pool limit
 def admin_add_task_reward(message, desc):
     try:
         reward = float(message.text)
-        bot.send_message(
-            message.chat.id, "Enter global claim limit:"
-        )
-        bot.register_next_step_handler(
-            message, admin_add_task_limit, desc, reward
-        )
+        if reward <= 0:
+            bot.send_message(
+                message.chat.id, 
+                "❌ Reward must be greater than 0. Task creation canceled."
+            )
+            return
     except ValueError:
         bot.send_message(
-            message.chat.id, "Invalid reward. Canceled."
+            message.chat.id, 
+            "❌ Invalid reward amount. Task creation canceled."
         )
+        return
+    bot.send_message(
+        message.chat.id, 
+        "Enter maximum global claim limit (total times this task can be completed):"
+    )
+    bot.register_next_step_handler(message, admin_add_task_limit, desc, reward)
 
-# Create Quest - Step 4: Write task as INACTIVE first
 def admin_add_task_limit(message, desc, reward):
     try:
         limit = int(message.text)
-        
-        if os.environ.get("DATABASE_URL"):
-            task_id = database.execute_query(
-                "INSERT INTO tasks "
-                "(description, reward, max_claims, is_active) "
-                "VALUES (?, ?, ?, 0) RETURNING id",
-                (desc, reward, limit)
+        if limit <= 0:
+            bot.send_message(
+                message.chat.id, 
+                "❌ Limit must be greater than 0. Task creation canceled."
             )
-        else:
-            task_id = database.execute_query(
-                "INSERT INTO tasks "
-                "(description, reward, max_claims, is_active) "
-                "VALUES (?, ?, ?, 0)",
-                (desc, reward, limit)
-            )
-            if not task_id: 
-                task_id = database.fetch_query(
-                    "SELECT id FROM tasks "
-                    "WHERE description = ? AND reward = ? "
-                    "ORDER BY id DESC LIMIT 1",
-                    (desc, reward)
-                )[0][0]
-        
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton(
-                "🔒 One-time Claim", 
-                callback_data=f"setclaim_single_{task_id}"
-            ),
-            types.InlineKeyboardButton(
-                "🔄 Multiple Claims", 
-                callback_data=f"setclaim_multi_{task_id}"
-            )
-        )
+            return
+    except ValueError:
         bot.send_message(
             message.chat.id, 
-            "Configure user submission limits:\n\n"
-            "• <b>One-time Claim:</b> Users can complete only once.\n"
-            "• <b>Multiple Claims:</b> Users can submit multiple times.",
-            reply_markup=markup,
-            parse_mode="HTML"
+            "❌ Invalid limit number. Task creation canceled."
         )
-    except ValueError:
-        bot.send_message(message.chat.id, "Invalid limit. Canceled.")
+        return
 
-# Step 5: Database-driven Callback handler
-@bot.callback_query_handler(
-    func=lambda call: call.data.startswith("setclaim_")
-)
+    markup = types.InlineKeyboardMarkup()
+    # Save parameters in state memory cleanly without pre-database pollution
+    pending_tasks[message.chat.id] = {
+        "desc": desc, "reward": reward, "limit": limit
+    }
+
+    markup.add(
+        types.InlineKeyboardButton(
+            "🔒 One-time Claim",  callback_data="setclaim_single"
+        ),
+        types.InlineKeyboardButton(
+            "🔄 Multiple Claims", callback_data="setclaim_multi"
+        )
+    )
+    bot.send_message(
+        message.chat.id,
+        "Configure user submission limits:\n\n"
+        "• <b>One-time Claim:</b> Users can complete this task only once.\n"
+        "• <b>Multiple Claims:</b> Users can submit proof multiple times.",
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("setclaim_"))
 def handle_claimtype_selection(call):
-    parts = call.data.split("_")
-    action = parts[1]
-    task_id = int(parts[2])
-    
+    bot.answer_callback_query(call.id)  # Dismiss Telegram's loading spinner
+
+    action = call.data.split("_")[1]  # "single" or "multi"
+    admin_chat_id = call.message.chat.id
+
+    task_data = pending_tasks.get(admin_chat_id)
+    if not task_data:
+        bot.send_message(
+            admin_chat_id, 
+            "❌ Session expired. Please create the task again."
+        )
+        return
+
     if action == "single":
-        database.execute_query(
-            "UPDATE tasks SET max_user_claims = 1, is_active = 1 "
-            "WHERE id = ?", (task_id,)
-        )
-        bot.edit_message_text(
-            "✅ <b>Quest activated!</b> (One-time Claim enabled)", 
-            chat_id=call.message.chat.id, 
-            message_id=call.message.message_id,
-            parse_mode="HTML"
-        )
-        
+        _finalize_task(admin_chat_id, task_data, max_user_claims=1, call=call)
+
     elif action == "multi":
         bot.send_message(
-            call.message.chat.id, 
-            "Enter maximum allowed submissions per individual user:"
+            admin_chat_id, 
+            "Enter maximum allowed submissions per individual user (numbers only):"
         )
         bot.register_next_step_handler(
-            call.message, admin_add_task_user_limit, task_id
+            call.message, admin_add_task_user_limit, task_data, call
         )
 
-# Step 6: Save user limit & activate task
-def admin_add_task_user_limit(message, task_id):
+def admin_add_task_user_limit(message, task_data, call):
     try:
         user_limit = int(message.text)
-        database.execute_query(
-            "UPDATE tasks SET max_user_claims = ?, is_active = 1 "
-            "WHERE id = ?", (user_limit, task_id)
+        if user_limit <= 0:
+            bot.send_message(
+                message.chat.id, "❌ Must be greater than 0. Try again:"
+            )
+            bot.register_next_step_handler(
+                message, admin_add_task_user_limit, task_data, call
+            )
+            return
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid number. Try again:")
+        bot.register_next_step_handler(
+            message, admin_add_task_user_limit, task_data, call
         )
+        return
+
+    _finalize_task(
+        message.chat.id, task_data, max_user_claims=user_limit, call=call
+    )
+
+def _finalize_task(chat_id, task_data, max_user_claims, call=None):
+    try:
+        # Atomic secure insert returning generated ID
+        task_id = database.execute_query(
+            "INSERT INTO tasks "
+            "(description, reward, max_claims, max_user_claims, is_active) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (task_data["desc"], task_data["reward"], 
+             task_data["limit"], max_user_claims)
+        )
+        if not task_id:
+            raise Exception("Database transaction failed.")
+
+        # Clean up pending state memory
+        pending_tasks.pop(chat_id, None)
+
+        if call:
+            try:
+                bot.edit_message_text(
+                    f"✅ <b>Quest #{task_id} activated!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📝 {task_data['desc']}\n"
+                    f"💰 {task_data['reward']:.2f} USDT | "
+                    f"👥 Max {task_data['limit']} global | "
+                    f"🔒 {'One-time' if max_user_claims == 1 else f'Up to {max_user_claims} per user'}",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                bot.send_message(
+                    chat_id,
+                    f"✅ <b>Quest #{task_id} activated successfully!</b>",
+                    parse_mode="HTML"
+                )
+        else:
+            bot.send_message(
+                chat_id,
+                f"✅ <b>Quest #{task_id} activated successfully!</b>",
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        print(f"Task creation error: {e}")
         bot.send_message(
-            message.chat.id, 
-            f"✅ <b>Quest activated!</b> (Multiple claims "
-            f"limit set to {user_limit} per user)",
+            chat_id, 
+            f"❌ Task creation failed: <code>{e}</code>", 
             parse_mode="HTML"
         )
-    except ValueError:
-        bot.send_message(message.chat.id, "Invalid number. Canceled.")
 
 # Admin Broadcast Flow
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def admin_broadcast_start(call):
+    bot.answer_callback_query(call.id)
     bot.send_message(
         call.message.chat.id, "Enter message to broadcast:"
     )
@@ -805,6 +868,7 @@ def admin_broadcast_process(message):
     func=lambda call: call.data == "admin_review_submissions"
 )
 def admin_review_submissions(call):
+    bot.answer_callback_query(call.id)
     submissions = database.fetch_query(
         "SELECT s.id, s.user_id, s.proof, t.reward, "
         "t.description, t.id "
@@ -864,6 +928,7 @@ def admin_review_submissions(call):
     or call.data.startswith("reject_")
 )
 def handle_review_decision(call):
+    bot.answer_callback_query(call.id)
     parts = call.data.split("_")
     action = parts[0]
     sub_id = int(parts[1])
@@ -878,9 +943,6 @@ def handle_review_decision(call):
     )
     
     if not sub_data or sub_data[0][3] != 'PENDING':
-        bot.answer_callback_query(
-            call.id, "Error: Already processed."
-        )
         return
         
     user_id, reward, task_id, status, username = sub_data[0]
