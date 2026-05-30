@@ -183,7 +183,6 @@ def view_tasks(message):
     for task in tasks:
         task_id, desc, reward, max_claims, claims_count, max_user_claims = task
         
-        # Check user specific submissions
         user_submissions_count = database.fetch_query(
             "SELECT COUNT(*) FROM submissions WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
             (user_id, task_id)
@@ -533,19 +532,16 @@ def admin_add_task_limit(message, desc, reward):
     try:
         limit = int(message.text)
         
-        # Write task to DB immediately as INACTIVE (is_active = 0)
         database.execute_query(
             "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0)",
             (desc, reward, limit)
         )
         
-        # Retrieve the newly created inactive task ID
         task_id = database.fetch_query(
             "SELECT id FROM tasks WHERE description = ? AND reward = ? ORDER BY id DESC LIMIT 1",
             (desc, reward)
         )[0][0]
         
-        # Build markup passing the task_id directly inside the callback data
         markup = types.InlineKeyboardMarkup()
         markup.add(
             types.InlineKeyboardButton("🔒 One-time Claim", callback_data=f"setclaim_single_{task_id}"),
@@ -562,7 +558,7 @@ def admin_add_task_limit(message, desc, reward):
     except ValueError:
         bot.send_message(message.chat.id, "Invalid limit number. Task creation canceled.")
 
-# Step 5: Database-driven Callback handler (Completely immune to Gunicorn multi-process session loss)
+# Step 5: Database-driven Callback handler
 @bot.callback_query_handler(func=lambda call: call.data.startswith("setclaim_"))
 def handle_claimtype_selection(call):
     parts = call.data.split("_")
@@ -570,7 +566,6 @@ def handle_claimtype_selection(call):
     task_id = int(parts[2])
     
     if action == "single":
-        # Activate task with user limit = 1
         database.execute_query(
             "UPDATE tasks SET max_user_claims = 1, is_active = 1 WHERE id = ?",
             (task_id,)
@@ -722,19 +717,13 @@ def handle_review_decision(call):
         bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
 
-# --- START THREADS (GLOBAL - GUNICORN COMPATIBLE) ---
-def run_bot_polling():
-    print("TaskFarmer decentralized core active and polling...")
-    try:
-        bot.infinity_polling()
-    except Exception as e:
-        print(f"Bot polling crashed: {e}")
-
-# Start the Telegram bot polling in a background thread immediately on module load
-bot_thread = threading.Thread(target=run_bot_polling)
-bot_thread.daemon = True
-bot_thread.start()
-
+# --- START THREADS (GLOBAL) ---
 if __name__ == "__main__":
-    # This is only executed when running locally, not on Render Gunicorn
+    # Start Telegram bot polling in a background thread
+    bot_thread = threading.Thread(target=lambda: bot.infinity_polling())
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    print("TaskFarmer decentralized core active...")
+    # Start the Flask web server on the main thread to bind to Render's port
     run_web_server()
