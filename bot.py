@@ -61,18 +61,18 @@ def send_crypto_pay_transfer(target_user_id, amount_usdt):
 # --- KEYBOARDS ---
 def main_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🌾 Harvest Tasks", "💼 Farm Wallet")
-    markup.add("🌱 Daily Cultivate", "🤝 Share the Yield")
-    markup.add("📤 Cash Out", "💬 Farmer Helpdesk")
+    markup.add("💎 Explore Quests", "💼 Web3 Wallet")
+    markup.add("⚡ Daily Claim", "🔗 Referral Hub")
+    markup.add("📤 Withdraw USDT", "💬 Support Desk")
     if is_admin(user_id):
-        markup.add("⚙️ Farm Command")
+        markup.add("⚙️ Admin Console")
     return markup
 
 def admin_keyboard():
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("➕ Create Task", callback_data="admin_add_task"))
+    markup.add(types.InlineKeyboardButton("➕ Create Quest", callback_data="admin_add_task"))
     markup.add(types.InlineKeyboardButton("📥 Verify Submissions", callback_data="admin_review_submissions"))
-    markup.add(types.InlineKeyboardButton("📢 Broadcast to Fields", callback_data="admin_broadcast"))
+    markup.add(types.InlineKeyboardButton("📢 Global Announcement", callback_data="admin_broadcast"))
     return markup
 
 # --- USER COMMANDS ---
@@ -110,22 +110,23 @@ def send_welcome(message):
             try:
                 bot.send_message(
                     referred_by, 
-                    f"🤝 **New Farm Partner!**\n━━━━━━━━━━━━━━━━━━━━\n"
-                    f"@{username} has joined your cultivation network.\n"
-                    f"💰 **Bonus Credited:** `+{ref_reward:.2f} USDT`",
+                    f"🤝 **New Referral Partner!**\n━━━━━━━━━━━━━━━━━━━━\n"
+                    f"@{username} has joined via your referral link.\n"
+                    f"💰 **Token Allocation:** `+{ref_reward:.2f} USDT`",
                     parse_mode="Markdown"
                 )
             except Exception as e:
                 print(f"Failed to notify referrer: {e}")
     
     welcome_text = (
-        f"🌾 **Welcome to TaskFarmer Premium** 🌾\n"
+        f"⚡ **TaskFarmer Web3 Portal** ⚡\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Cultivate digital yields by completing simple tasks, checking in daily, "
-        f"and expanding your network.\n\n"
-        f"⚡ **Direct Payouts:** Paid instantly in USDT directly to your Telegram `@CryptoBot` wallet.\n"
+        f"Maximize your earnings by participating in crypto quests, "
+        f"completing interactive daily claims, and growing your referral network.\n\n"
+        f"💎 **Instant Settlements:** Earned yields are settled instantly in USDT "
+        f"directly to your `@CryptoBot` wallet on Telegram.\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Select an option below to begin your harvest."
+        f"Access the options below to initialize your dashboard."
     )
     
     bot.send_message(
@@ -135,7 +136,7 @@ def send_welcome(message):
         parse_mode="Markdown"
     )
 
-@bot.message_handler(func=lambda message: message.text == "🌾 Harvest Tasks")
+@bot.message_handler(func=lambda message: message.text == "💎 Explore Quests")
 def view_tasks(message):
     tasks = database.fetch_query(
         "SELECT id, description, reward, max_claims, claims_count FROM tasks WHERE is_active = 1 AND claims_count < max_claims"
@@ -143,22 +144,22 @@ def view_tasks(message):
     if not tasks:
         bot.send_message(
             message.chat.id, 
-            "🏜 **The fields are quiet.**\n━━━━━━━━━━━━━━━━━━━━\nNo active tasks are available at this moment. Check back soon for new opportunities."
+            "🌐 **No Quests Available**\n━━━━━━━━━━━━━━━━━━━━\nAll standard pools are currently filled. Check back shortly for new contract deployments."
         )
         return
     
-    bot.send_message(message.chat.id, "📊 **Active Cultivation Tasks**\n━━━━━━━━━━━━━━━━━━━━")
+    bot.send_message(message.chat.id, "📊 **Active Decentralized Quests**\n━━━━━━━━━━━━━━━━━━━━")
     
     for task in tasks:
         task_id, desc, reward, max_claims, claims_count = task
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Submit Verification", callback_data=f"submit_{task_id}"))
+        markup.add(types.InlineKeyboardButton("Submit Proof", callback_data=f"submit_{task_id}"))
         
         task_card = (
-            f"📋 **Task {task_id}**\n\n"
-            f"📝 **Description:**\n{desc}\n\n"
-            f"💰 **Yield Reward:** `{reward:.2f} USDT`\n"
-            f"👥 **Field Limit:** {claims_count} / {max_claims} claimed"
+            f"📋 **Quest ID: #{task_id}**\n\n"
+            f"📝 **Requirements:**\n{desc}\n\n"
+            f"💰 **Allocation:** `{reward:.2f} USDT`\n"
+            f"👥 **Pool Status:** {claims_count} / {max_claims} spots filled"
         )
         
         bot.send_message(
@@ -168,18 +169,18 @@ def view_tasks(message):
             reply_markup=markup
         )
 
-@bot.message_handler(func=lambda message: message.text == "💼 Farm Wallet")
+@bot.message_handler(func=lambda message: message.text == "💼 Web3 Wallet")
 def check_balance(message):
     user_id = message.from_user.id
     user = database.fetch_query("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     if user:
         balance = user[0][0]
         wallet_card = (
-            f"💼 **TaskFarmer Balance Sheet**\n"
+            f"💼 **TaskFarmer Dashboard**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 **Available Yield:** `{balance:.2f} USDT`\n\n"
-            f"ℹ️ All automated disbursements are safely processed directly "
-            f"to your Telegram `@CryptoBot` wallet upon request."
+            f"📊 **Available Balance:** `{balance:.2f} USDT`\n\n"
+            f"🔐 *Secure off-chain execution allows seamless transfers straight "
+            f"into your `@CryptoBot` account.*"
         )
         bot.send_message(
             message.chat.id, 
@@ -187,8 +188,8 @@ def check_balance(message):
             parse_mode="Markdown"
         )
 
-# --- DAILY CULTIVATE SYSTEM ---
-@bot.message_handler(func=lambda message: message.text == "🌱 Daily Cultivate")
+# --- DAILY CHECK-IN SYSTEM ---
+@bot.message_handler(func=lambda message: message.text == "⚡ Daily Claim")
 def claim_daily_bonus(message):
     user_id = message.from_user.id
     user = database.fetch_query("SELECT check_in_count, last_check_in FROM users WHERE user_id = ?", (user_id,))
@@ -201,7 +202,7 @@ def claim_daily_bonus(message):
     if check_in_count >= 5:
         bot.send_message(
             message.chat.id, 
-            "⭐ **Cultivation Complete**\n━━━━━━━━━━━━━━━━━━━━\nYou have already gathered all 5 days of your initial welcome yield program."
+            "🔒 **Allocation Exceeded**\n━━━━━━━━━━━━━━━━━━━━\nYou have completed all 5 allocations of your early supporter program."
         )
         return
         
@@ -210,7 +211,7 @@ def claim_daily_bonus(message):
     if last_check_in == today_str:
         bot.send_message(
             message.chat.id, 
-            "⏳ **Patience, Farmer**\n━━━━━━━━━━━━━━━━━━━━\nYour daily crop needs time to grow. Come back tomorrow to claim your next bonus."
+            "⏳ **Cooldown Active**\n━━━━━━━━━━━━━━━━━━━━\nYour daily reward allocation resets in 24 hours. Check back tomorrow."
         )
         return
         
@@ -223,10 +224,10 @@ def claim_daily_bonus(message):
     )
     
     success_text = (
-        f"🌱 **Daily Cultivation Successful!**\n"
+        f"⚡ **Daily Reward Claimed!**\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📈 **Cycle Progress:** Day {new_count} of 5\n"
-        f"💰 **Harvested:** `+{reward:.2f} USDT`"
+        f"📈 **Milestone:** Day {new_count} / 5\n"
+        f"💰 **Credit:** `+{reward:.2f} USDT`"
     )
     
     bot.send_message(
@@ -236,7 +237,7 @@ def claim_daily_bonus(message):
     )
 
 # --- REFERRAL SYSTEM ---
-@bot.message_handler(func=lambda message: message.text == "🤝 Share the Yield")
+@bot.message_handler(func=lambda message: message.text == "🔗 Referral Hub")
 def send_referral_link(message):
     user_id = message.from_user.id
     bot_info = bot.get_me()
@@ -244,12 +245,12 @@ def send_referral_link(message):
     ref_link = f"https://t.me/{bot_username}?start={user_id}"
     
     ref_card = (
-        f"🤝 **TaskFarmer Partnership Program**\n"
+        f"👥 **Web3 Referral Network**\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Expand your agricultural network and earn a referral bonus for every active "
-        f"member who joins your network.\n\n"
-        f"💰 **Referral Reward:** `0.16 USDT` per registered user\n\n"
-        f"🔗 **Your Direct Share Link:**\n`{ref_link}`"
+        f"Expand the TaskFarmer ecosystem and earn rewards whenever new users "
+        f"register using your partner link.\n\n"
+        f"💰 **Partner Fee:** `0.16 USDT` per user\n\n"
+        f"🔗 **Your Partner Link:**\n`{ref_link}`"
     )
     
     bot.send_message(
@@ -259,12 +260,12 @@ def send_referral_link(message):
     )
 
 # --- SUPPORT SYSTEM ---
-@bot.message_handler(func=lambda message: message.text == "💬 Farmer Helpdesk")
+@bot.message_handler(func=lambda message: message.text == "💬 Support Desk")
 def prompt_support_message(message):
     bot.send_message(
         message.chat.id, 
-        "✍️ **Farmer Helpdesk**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Please type your inquiry or report below and send it. Our administrative team will be notified."
+        "💬 **Helpdesk Terminal**\n━━━━━━━━━━━━━━━━━━━━\n"
+        "State your issue or inquiry below. A support technician will review your submission."
     )
     bot.register_next_step_handler(message, send_support_message_to_admin)
 
@@ -274,21 +275,21 @@ def send_support_message_to_admin(message):
     text = message.text
     
     if not text:
-        bot.send_message(message.chat.id, "Support inquiry empty. Canceled.")
+        bot.send_message(message.chat.id, "Inquiry invalid. Ticket creation terminated.")
         return
 
     bot.send_message(
         ADMIN_ID,
-        f"📩 **New Helpdesk Ticket**\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"📩 **New Ticket Received**\n━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 **User:** @{username} (`{user_id}`)\n"
-        f"📝 **Message:** {text}\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"📝 **Details:** {text}\n━━━━━━━━━━━━━━━━━━━━\n"
         f"Reply using: `/reply {user_id} <message>`",
         parse_mode="Markdown"
     )
     bot.send_message(
         message.chat.id, 
-        "✅ **Ticket Submitted**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Your message was securely sent to the support office. We will reply as soon as possible."
+        "✅ **Ticket Created**\n━━━━━━━━━━━━━━━━━━━━\n"
+        "Your inquiry has been logged. An administrator will reply to your inbox directly."
     )
 
 @bot.message_handler(commands=['reply'])
@@ -307,9 +308,9 @@ def admin_reply_support(message):
         
         bot.send_message(
             target_user_id,
-            f"💬 **Message from TaskFarmer Support:**\n━━━━━━━━━━━━━━━━━━━━\n{reply_text}"
+            f"💬 **Inbound Support Dispatch:**\n━━━━━━━━━━━━━━━━━━━━\n{reply_text}"
         )
-        bot.send_message(message.chat.id, f"Reply dispatched to user `{target_user_id}`.")
+        bot.send_message(message.chat.id, f"Reply transmitted to user `{target_user_id}`.")
     except Exception as e:
         bot.send_message(message.chat.id, f"Failed to deliver message: {e}")
 
@@ -323,19 +324,19 @@ def handle_submit_request(call):
         "SELECT description, reward, max_claims, claims_count FROM tasks WHERE id = ?", (task_id,)
     )
     if not task:
-        bot.send_message(user_id, "Task not found.")
+        bot.send_message(user_id, "Quest not found.")
         return
         
     description, reward, max_claims, claims_count = task[0]
     
     if claims_count >= max_claims:
-        bot.send_message(user_id, "❌ This task has reached its global harvest limit.")
+        bot.send_message(user_id, "❌ This pool limit has been reached.")
         return
     
     # Auto Telegram join logic
     if description.strip().upper().startswith("JOIN:"):
         target_channel = description.replace("JOIN:", "").strip()
-        bot.send_message(user_id, f"Checking community databases for {target_channel}...")
+        bot.send_message(user_id, f"Parsing metadata for {target_channel}...")
         
         is_member = check_telegram_membership(target_channel, user_id)
         
@@ -345,7 +346,7 @@ def handle_submit_request(call):
                 (user_id, task_id)
             )
             if already_done:
-                bot.send_message(user_id, "❌ You have already claimed your share for this task.")
+                bot.send_message(user_id, "❌ Address already verified for this pool.")
                 return
                 
             database.execute_query(
@@ -362,27 +363,27 @@ def handle_submit_request(call):
             )
             bot.send_message(
                 user_id, 
-                f"✅ **Auto-Verification Success!**\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"Reward of `{reward:.2f} USDT` has been added to your Farm Wallet."
+                f"✅ **Quest Verification Successful!**\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"`{reward:.2f} USDT` has been settled in your Web3 Wallet."
             )
         else:
             bot.send_message(
                 user_id, 
-                f"❌ **Membership Unverified**\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"We could not verify your membership in {target_channel}. Ensure you have joined, then try again."
+                f"❌ **Identity Unverified**\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"Verification failed for {target_channel}. Join the target space, then retry."
             )
             
     else:
         bot.send_message(
             user_id, 
-            f"ℹ️ **Manual Submission Required**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"Please submit the required proof (e.g. screenshot link, username, or text description) below:"
+            f"ℹ️ **Manual Proof Required**\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"Please submit the verification proof (screenshot link, transaction hash, or username) below:"
         )
         bot.register_next_step_handler(call.message, process_submission, task_id)
 
 def process_submission(message, task_id):
     user_id = message.from_user.id
-    proof = message.text if message.text else "Attachment/File submitted"
+    proof = message.text if message.text else "Binary proof submitted"
     
     database.execute_query(
         "INSERT INTO submissions (user_id, task_id, proof) VALUES (?, ?, ?)",
@@ -390,12 +391,12 @@ def process_submission(message, task_id):
     )
     bot.send_message(
         message.chat.id, 
-        "✅ **Proof Submitted Successfully**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Your submission is in queue. Admin staff will audit and approve it shortly."
+        "✅ **Proof Registered**\n━━━━━━━━━━━━━━━━━━━━\n"
+        "Your quest proof is queued. Auditors will process it shortly."
     )
 
 # --- WITHDRAWAL ---
-@bot.message_handler(func=lambda message: message.text == "📤 Cash Out")
+@bot.message_handler(func=lambda message: message.text == "📤 Withdraw USDT")
 def withdraw_request(message):
     user_id = message.from_user.id
     user = database.fetch_query("SELECT balance FROM users WHERE user_id = ?", (user_id,))
@@ -406,10 +407,10 @@ def withdraw_request(message):
     balance = user[0][0]
     
     if balance <= 0:
-        bot.send_message(message.chat.id, "❌ Your wallet is currently empty. Earn USDT by completing tasks first.")
+        bot.send_message(message.chat.id, "❌ Insufficient balance for withdrawal. Complete active quests to earn.")
         return
         
-    bot.send_message(message.chat.id, f"🚀 **Processing secure payout of {balance:.4f} USDT to your @CryptoBot wallet...**")
+    bot.send_message(message.chat.id, f"⚡ **Broadcasting transaction to send {balance:.4f} USDT...**")
     
     success, reason = send_crypto_pay_transfer(user_id, balance)
     
@@ -417,27 +418,27 @@ def withdraw_request(message):
         database.execute_query("UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,))
         bot.send_message(
             message.chat.id, 
-            f"✅ **Cash Out Successful!**\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ **Withdrawal Confirmed!**\n━━━━━━━━━━━━━━━━━━━━\n"
             f"**Transferred:** `{balance:.4f} USDT`\n"
-            f"Your funds are available now. Open `@CryptoBot` to view your assets.",
+            f"Your funds are settled. Open `@CryptoBot` to interact with your balance.",
             parse_mode="Markdown"
         )
     else:
         bot.send_message(
             message.chat.id, 
-            f"❌ **Disbursement Failed**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"Our clearing system returned an error:\n`{reason}`\n\n"
-            f"Ensure your Telegram configurations allow receiving transfers or contact the helpdesk.",
+            f"❌ **Transaction Rejected**\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"The network returned an execution error:\n`{reason}`\n\n"
+            f"Review your settings or submit a helpdesk ticket.",
             parse_mode="Markdown"
         )
 
 # --- ADMIN PANEL ---
-@bot.message_handler(func=lambda message: message.text == "⚙️ Farm Command" and is_admin(message.from_user.id))
+@bot.message_handler(func=lambda message: message.text == "⚙️ Admin Console" and is_admin(message.from_user.id))
 def admin_panel(message):
     bot.send_message(
         message.chat.id, 
         "⚙️ **TaskFarmer Administration Console**\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Execute global operations, manage user tasks, audit proof submissions, and broadcast announcements.", 
+        "Deploy contracts, audit quest entries, and broadcast global system notifications.", 
         reply_markup=admin_keyboard()
     )
 
@@ -490,7 +491,7 @@ def admin_broadcast_process(message):
     for u in users:
         target_id = u[0]
         try:
-            bot.send_message(target_id, f"📢 **TaskFarmer Announcement**\n━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", parse_mode="Markdown")
+            bot.send_message(target_id, f"📢 **System Broadcast**\n━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", parse_mode="Markdown")
             success_count += 1
         except Exception:
             fail_count += 1
@@ -507,7 +508,7 @@ def admin_review_submissions(call):
     )
     
     if not submissions:
-        bot.send_message(call.message.chat.id, "No pending submissions currently.")
+        bot.send_message(call.message.chat.id, "No pending quest audits.")
         return
         
     for sub in submissions:
@@ -519,11 +520,11 @@ def admin_review_submissions(call):
         )
         bot.send_message(
             call.message.chat.id,
-            f"**Audit Ticket #{sub_id}**\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"**Verification Ticket #{sub_id}**\n━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 **User ID:** `{user_id}`\n"
-            f"📋 **Task:** {desc}\n"
-            f"📝 **User Proof:** {proof}\n"
-            f"💰 **Assigned Value:** `{reward:.2f} USDT`",
+            f"📋 **Quest Details:** {desc}\n"
+            f"📝 **Client Proof:** {proof}\n"
+            f"💰 **Pool Allocation:** `{reward:.2f} USDT`",
             parse_mode="Markdown",
             reply_markup=markup
         )
@@ -543,7 +544,7 @@ def handle_review_decision(call):
         if task:
             max_claims, claims_count = task[0]
             if claims_count >= max_claims:
-                bot.send_message(call.message.chat.id, "Cannot approve. Global harvest limit has been met.")
+                bot.send_message(call.message.chat.id, "Approval error: Pool is exhausted.")
                 return
         
         database.execute_query("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
@@ -553,9 +554,9 @@ def handle_review_decision(call):
         try:
             bot.send_message(
                 user_id, 
-                f"🎉 **Submission Approved!**\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"Audit Ticket #{sub_id} passed evaluation.\n"
-                f"💰 **Value Credited:** `{reward:.2f} USDT`"
+                f"🎉 **Quest Approved!**\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"Ticket #{sub_id} passed validation.\n"
+                f"💰 **Token Credit:** `{reward:.2f} USDT`"
             )
         except Exception as e:
             print(f"Could not notify user {user_id}: {e}")
@@ -568,5 +569,5 @@ def handle_review_decision(call):
 
 # --- START BOT ---
 if __name__ == "__main__":
-    print("TaskFarmer system initialized...")
+    print("TaskFarmer decentralized core active...")
     bot.infinity_polling()
