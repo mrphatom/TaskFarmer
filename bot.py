@@ -1,6 +1,7 @@
 import os
 import datetime
 import threading
+import time
 import requests
 import telebot
 from telebot import types
@@ -49,7 +50,8 @@ def check_telegram_membership(chat_id_or_username, user_id):
         return False
 
 def send_crypto_pay_transfer(target_user_id, amount_usdt):
-    url = "https://pay.cryptoboot.ru/api/transfer"
+    # Live production endpoint
+    url = "https://pay.crypt.bot/api/transfer"
     headers = {
         "Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN,
         "Content-Type": "application/json"
@@ -71,6 +73,43 @@ def send_crypto_pay_transfer(target_user_id, amount_usdt):
             return False, error_msg
     except Exception as e:
         return False, str(e)
+
+def handle_referral_credit(referred_user_id, username):
+    """
+    Credits a referrer only after the referred user completes their first task.
+    This prevents fake accounts from draining the referral wallet.
+    """
+    user_info = database.fetch_query(
+        "SELECT referred_by, referral_credited FROM users WHERE user_id = ?", 
+        (referred_user_id,)
+    )
+    if not user_info:
+        return
+        
+    referred_by, referral_credited = user_info[0]
+    
+    if referred_by and referral_credited == 0:
+        ref_reward = 0.16
+        # Mark referral as credited first
+        database.execute_query(
+            "UPDATE users SET referral_credited = 1 WHERE user_id = ?", 
+            (referred_user_id,)
+        )
+        # Credit referrer
+        database.execute_query(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+            (ref_reward, referred_by)
+        )
+        try:
+            bot.send_message(
+                referred_by, 
+                f"🤝 <b>New Active Referral!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"@{username} completed their first quest.\n"
+                f"💰 <b>Bonus Credited:</b> <code>+{ref_reward:.2f} USDT</code>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"Failed to notify referrer: {e}")
 
 # --- KEYBOARDS ---
 def main_keyboard(user_id):
@@ -114,23 +153,6 @@ def send_welcome(message):
             "INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)", 
             (user_id, username, referred_by)
         )
-        
-        if referred_by:
-            ref_reward = 0.16
-            database.execute_query(
-                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                (ref_reward, referred_by)
-            )
-            try:
-                bot.send_message(
-                    referred_by, 
-                    f"🤝 <b>New Referral Partner!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-                    f"@{username} has joined via your referral link.\n"
-                    f"💰 <b>Token Allocation:</b> <code>+{ref_reward:.2f} USDT</code>",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                print(f"Failed to notify referrer: {e}")
     
     welcome_text = (
         f"⚡ <b>TaskFarmer Web3 Portal</b> ⚡\n"
@@ -274,7 +296,7 @@ def claim_daily_bonus(message):
         f"⚡ <b>Daily Reward Claimed!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📈 <b>Milestone:</b> Day {new_count} / 5\n"
-        f"💰 **Credit:** <code>+{reward:.2f} USDT</code>"
+        f"💰 <b>Credit:</b> <code>+{reward:.2f} USDT</code>"
     )
     
     bot.send_message(
@@ -296,8 +318,8 @@ def send_referral_link(message):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Expand the TaskFarmer ecosystem and earn rewards whenever new users "
         f"register using your partner link.\n\n"
-        f"💰 **Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
-        f"🔗 **Your Partner Link:</b>\n<code>{ref_link}</code>"
+        f"💰 <b>Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
+        f"🔗 <b>Your Partner Link:</b>\n<code>{ref_link}</code>"
     )
     
     bot.send_message(
@@ -418,6 +440,10 @@ def handle_submit_request(call):
                 f"<code>{reward:.2f} USDT</code> has been settled in your Web3 Wallet.",
                 parse_mode="HTML"
             )
+            # Handle referral logic validation
+            user_info = database.fetch_query("SELECT username FROM users WHERE user_id = ?", (user_id,))
+            username = user_info[0][0] if user_info else "Unknown"
+            handle_referral_credit(user_id, username)
         else:
             bot.send_message(
                 user_id, 
@@ -458,7 +484,7 @@ def process_submission(message, task_id):
         parse_mode="HTML"
     )
 
-# --- WITHDRAWAL ---
+# --- SECURE WITHDRAWAL WITH RACE CONDITION PROTECTION ---
 @bot.message_handler(func=lambda message: message.text == "📤 Withdraw USDT")
 def withdraw_request(message):
     user_id = message.from_user.id
@@ -473,12 +499,19 @@ def withdraw_request(message):
         bot.send_message(message.chat.id, "❌ Insufficient balance for withdrawal. Complete active quests to earn.")
         return
         
-    bot.send_message(message.chat.id, f"⚡ **Broadcasting transaction to send {balance:.4f} USDT...**")
+    bot.send_message(
+        message.chat.id, 
+        f"⚡ <b>Broadcasting transaction to send {balance:.4f} USDT...</b>",
+        parse_mode="HTML"
+    )
     
+    # 1. Debits the balance immediately in DB first (double spend protection)
+    database.execute_query("UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,))
+    
+    # 2. Initiate payout transaction
     success, reason = send_crypto_pay_transfer(user_id, balance)
     
     if success:
-        database.execute_query("UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,))
         bot.send_message(
             message.chat.id, 
             f"✅ <b>Withdrawal Confirmed!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -487,11 +520,13 @@ def withdraw_request(message):
             parse_mode="HTML"
         )
     else:
+        # 3. Refund back on failure
+        database.execute_query("UPDATE users SET balance = balance + ? WHERE user_id = ?", (balance, user_id))
         bot.send_message(
             message.chat.id, 
-            f"❌ **Transaction Rejected**\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"❌ <b>Transaction Rejected</b>\n━━━━━━━━━━━━━━━━━━━━\n"
             f"The network returned an execution error:\n<code>{reason}</code>\n\n"
-            f"Review your settings or submit a helpdesk ticket.",
+            f"Your funds have been refunded safely to your balance.",
             parse_mode="HTML"
         )
 
@@ -527,20 +562,27 @@ def admin_add_task_reward(message, desc):
     except ValueError:
         bot.send_message(message.chat.id, "Invalid reward amount. Task creation canceled.")
 
-# Create Quest - Step 4: Write task as INACTIVE first, then offer claim limit choices
+# Create Quest - Step 4: Write task as INACTIVE first, then offer claim limit choices (Safe Concurrent Insert)
 def admin_add_task_limit(message, desc, reward):
     try:
         limit = int(message.text)
         
-        database.execute_query(
-            "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0)",
-            (desc, reward, limit)
-        )
-        
-        task_id = database.fetch_query(
-            "SELECT id FROM tasks WHERE description = ? AND reward = ? ORDER BY id DESC LIMIT 1",
-            (desc, reward)
-        )[0][0]
+        # Concurrently safe: insert returning exact generated ID
+        if os.environ.get("DATABASE_URL"):
+            task_id = database.execute_query(
+                "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0) RETURNING id",
+                (desc, reward, limit)
+            )
+        else:
+            task_id = database.execute_query(
+                "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0)",
+                (desc, reward, limit)
+            )
+            if not task_id: # SQLite lastrowid backup query
+                task_id = database.fetch_query(
+                    "SELECT id FROM tasks WHERE description = ? AND reward = ? ORDER BY id DESC LIMIT 1",
+                    (desc, reward)
+                )[0][0]
         
         markup = types.InlineKeyboardMarkup()
         markup.add(
@@ -558,7 +600,7 @@ def admin_add_task_limit(message, desc, reward):
     except ValueError:
         bot.send_message(message.chat.id, "Invalid limit number. Task creation canceled.")
 
-# Step 5: Database-driven Callback handler
+# Step 5: Database-driven Callback handler (Secure Callback Limits)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("setclaim_"))
 def handle_claimtype_selection(call):
     parts = call.data.split("_")
@@ -600,7 +642,7 @@ def admin_add_task_user_limit(message, task_id):
     except ValueError:
         bot.send_message(message.chat.id, "Invalid number. Quest creation canceled.")
 
-# Admin Broadcast Flow
+# Admin Broadcast Flow with strict API rate limit compliance
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def admin_broadcast_start(call):
     bot.send_message(call.message.chat.id, "Enter message to broadcast to ALL users:")
@@ -623,12 +665,14 @@ def admin_broadcast_process(message):
         try:
             bot.send_message(target_id, f"📢 <b>System Broadcast</b>\n━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", parse_mode="HTML")
             success_count += 1
+            # Rate limiting compliant delay (~20 msgs / second max)
+            time.sleep(0.05)
         except Exception:
             fail_count += 1
             
     bot.send_message(message.chat.id, f"Broadcast complete.\n\nSent: {success_count}\nFailed: {fail_count}")
 
-# Verify Submissions Flow
+# Verify Submissions Flow (Secure DB-loaded IDs)
 @bot.callback_query_handler(func=lambda call: call.data == "admin_review_submissions")
 def admin_review_submissions(call):
     submissions = database.fetch_query(
@@ -646,7 +690,8 @@ def admin_review_submissions(call):
         sub_id, user_id, proof, reward, desc, task_id = sub
         markup = types.InlineKeyboardMarkup()
         markup.add(
-            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{sub_id}_{user_id}_{reward}_{task_id}"),
+            # Simplified callback mapping payloads preventing 64-byte limit overflow
+            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{sub_id}"),
             types.InlineKeyboardButton("❌ Reject", callback_data=f"reject_{sub_id}")
         )
         
@@ -654,7 +699,7 @@ def admin_review_submissions(call):
             f"<b>Verification Ticket #{sub_id}</b>\n━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
             f"📋 <b>Quest Details:</b> {desc}\n"
-            f"💰 <b>Pool Allocation:</b> `{reward:.2f} USDT`"
+            f"💰 <b>Pool Allocation:</b> <code>{reward:.2f} USDT</code>"
         )
         
         try:
@@ -681,47 +726,28 @@ def admin_review_submissions(call):
 def handle_review_decision(call):
     parts = call.data.split("_")
     action = parts[0]
-    sub_id = parts[1]
+    sub_id = int(parts[1])
+    
+    # Load submission details securely from DB to prevent callback tampering
+    sub_data = database.fetch_query(
+        """SELECT s.user_id, t.reward, t.id, s.status, u.username
+           FROM submissions s 
+           JOIN tasks t ON s.task_id = t.id 
+           JOIN users u ON s.user_id = u.user_id
+           WHERE s.id = ?""",
+        (sub_id,)
+    )
+    
+    if not sub_data or sub_data[0][3] != 'PENDING':
+        bot.answer_callback_query(call.id, "Error: This submission has already been processed.")
+        return
+        
+    user_id, reward, task_id, status, username = sub_data[0]
     
     if action == "approve":
-        user_id = parts[2]
-        reward = float(parts[3])
-        task_id = int(parts[4])
-        
+        # Check global limit
         task = database.fetch_query("SELECT max_claims, claims_count FROM tasks WHERE id = ?", (task_id,))
         if task:
             max_claims, claims_count = task[0]
             if claims_count >= max_claims:
-                bot.send_message(call.message.chat.id, "Approval error: Pool is exhausted.")
-                return
-        
-        database.execute_query("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
-        database.execute_query("UPDATE submissions SET status = 'APPROVED' WHERE id = ?", (sub_id,))
-        database.execute_query("UPDATE tasks SET claims_count = claims_count + 1 WHERE id = ?", (task_id,))
-        
-        try:
-            bot.send_message(
-                user_id, 
-                f"🎉 **Quest Approved!**\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"Ticket #{sub_id} passed validation.\n"
-                f"💰 **Token Credit:** <code>{reward:.2f} USDT</code>",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            print(f"Could not notify user {user_id}: {e}")
-            
-        bot.edit_message_text("Audit Result: APPROVED ✅", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        
-    elif action == "reject":
-        database.execute_query("UPDATE submissions SET status = 'REJECTED' WHERE id = ?", (sub_id,))
-        bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
-
-# --- SAFE POLLING START (GLOBAL RUNNER) ---
-# Start the Telegram bot polling immediately when the module loads
-bot_thread = threading.Thread(target=lambda: bot.infinity_polling())
-bot_thread.daemon = True
-bot_thread.start()
-
-if __name__ == "__main__":
-    # Start the Flask web server on the main thread to bind to Render's port
-    run_web_server()
+                bot.send_message(call.message.chat.id, "Approval error: Pool
