@@ -25,12 +25,16 @@ ADMIN_ID_STR = os.environ.get("ADMIN_ID")
 CRYPTO_PAY_TOKEN = os.environ.get("CRYPTO_PAY_TOKEN")
 
 if not API_TOKEN or not ADMIN_ID_STR:
-    raise ValueError("Missing BOT_TOKEN or ADMIN_ID environment variables.")
+    raise ValueError(
+        "Missing BOT_TOKEN or ADMIN_ID variables."
+    )
 
 try:
     ADMIN_ID = int(ADMIN_ID_STR)
 except ValueError:
-    raise ValueError("ADMIN_ID must be a valid numeric Telegram user ID.")
+    raise ValueError(
+        "ADMIN_ID must be a valid numeric Telegram ID."
+    )
 
 bot = telebot.TeleBot(API_TOKEN)
 database.init_db()
@@ -50,13 +54,15 @@ def check_telegram_membership(chat_id_or_username, user_id):
         return False
 
 def send_crypto_pay_transfer(target_user_id, amount_usdt):
-    # Live production endpoint
     url = "https://pay.crypt.bot/api/transfer"
     headers = {
         "Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN,
         "Content-Type": "application/json"
     }
-    spend_id = f"withdraw_{target_user_id}_{int(datetime.datetime.now().timestamp())}"
+    spend_id = (
+        f"withdraw_{target_user_id}_"
+        f"{int(datetime.datetime.now().timestamp())}"
+    )
     data = {
         "user_id": target_user_id,
         "asset": "USDT",
@@ -64,23 +70,25 @@ def send_crypto_pay_transfer(target_user_id, amount_usdt):
         "spend_id": spend_id
     }
     try:
-        response = requests.post(url, json=data, headers=headers, timeout=10)
+        response = requests.post(
+            url, json=data, headers=headers, timeout=10
+        )
         res_data = response.json()
         if response.status_code == 200 and res_data.get("ok"):
             return True, "Payment completed."
         else:
-            error_msg = res_data.get("error", {}).get("name", "Unknown Error")
+            error_msg = (
+                res_data.get("error", {})
+                .get("name", "Unknown Error")
+            )
             return False, error_msg
     except Exception as e:
         return False, str(e)
 
 def handle_referral_credit(referred_user_id, username):
-    """
-    Credits a referrer only after the referred user completes their first task.
-    This prevents fake accounts from draining the referral wallet.
-    """
     user_info = database.fetch_query(
-        "SELECT referred_by, referral_credited FROM users WHERE user_id = ?", 
+        "SELECT referred_by, referral_credited "
+        "FROM users WHERE user_id = ?", 
         (referred_user_id,)
     )
     if not user_info:
@@ -90,22 +98,24 @@ def handle_referral_credit(referred_user_id, username):
     
     if referred_by and referral_credited == 0:
         ref_reward = 0.16
-        # Mark referral as credited first
         database.execute_query(
-            "UPDATE users SET referral_credited = 1 WHERE user_id = ?", 
+            "UPDATE users SET referral_credited = 1 "
+            "WHERE user_id = ?", 
             (referred_user_id,)
         )
-        # Credit referrer
         database.execute_query(
-            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+            "UPDATE users SET balance = balance + ? "
+            "WHERE user_id = ?",
             (ref_reward, referred_by)
         )
         try:
             bot.send_message(
                 referred_by, 
-                f"🤝 <b>New Active Referral!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"🤝 <b>New Referral Partner!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"@{username} completed their first quest.\n"
-                f"💰 <b>Bonus Credited:</b> <code>+{ref_reward:.2f} USDT</code>",
+                f"💰 <b>Bonus Credited:</b> "
+                f"<code>+{ref_reward:.2f} USDT</code>",
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -123,9 +133,22 @@ def main_keyboard(user_id):
 
 def admin_keyboard():
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("➕ Create Quest", callback_data="admin_add_task"))
-    markup.add(types.InlineKeyboardButton("📥 Verify Submissions", callback_data="admin_review_submissions"))
-    markup.add(types.InlineKeyboardButton("📢 Global Announcement", callback_data="admin_broadcast"))
+    markup.add(
+        types.InlineKeyboardButton(
+            "➕ Create Quest", callback_data="admin_add_task"
+        )
+    )
+    markup.add(
+        types.InlineKeyboardButton(
+            "📥 Verify Submissions", 
+            callback_data="admin_review_submissions"
+        )
+    )
+    markup.add(
+        types.InlineKeyboardButton(
+            "📢 Global Announcement", callback_data="admin_broadcast"
+        )
+    )
     return markup
 
 # --- USER COMMANDS ---
@@ -134,7 +157,9 @@ def send_welcome(message):
     user_id = message.from_user.id
     username = message.from_user.username or "Unknown"
     
-    user = database.fetch_query("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = database.fetch_query(
+        "SELECT * FROM users WHERE user_id = ?", (user_id,)
+    )
     
     if not user:
         referred_by = None
@@ -143,14 +168,18 @@ def send_welcome(message):
             try:
                 ref_id = int(parts[1])
                 if ref_id != user_id:
-                    referrer = database.fetch_query("SELECT user_id FROM users WHERE user_id = ?", (ref_id,))
+                    referrer = database.fetch_query(
+                        "SELECT user_id FROM users WHERE user_id = ?", 
+                        (ref_id,)
+                    )
                     if referrer:
                         referred_by = ref_id
             except ValueError:
                 pass
         
         database.execute_query(
-            "INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)", 
+            "INSERT INTO users (user_id, username, referred_by) "
+            "VALUES (?, ?, ?)", 
             (user_id, username, referred_by)
         )
     
@@ -158,9 +187,9 @@ def send_welcome(message):
         f"⚡ <b>TaskFarmer Web3 Portal</b> ⚡\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Maximize your earnings by participating in crypto quests, "
-        f"completing interactive daily claims, and growing your referral network.\n\n"
-        f"💎 <b>Instant Settlements:</b> Earned yields are settled instantly in USDT "
-        f"directly to your <code>@CryptoBot</code> wallet on Telegram.\n"
+        f"completing daily claims, and growing your network.\n\n"
+        f"💎 <b>Instant Settlements:</b> Paid in USDT "
+        f"directly to your <code>@CryptoBot</code> wallet.\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Access the options below to initialize your dashboard."
     )
@@ -177,8 +206,9 @@ def send_help_info(message):
     help_text = (
         "ℹ️ <b>TaskFarmer Help Guide</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         "• Tap <b>💎 Explore Quests</b> to find active contract pools.\n"
-        "• Tap <b>📤 Withdraw USDT</b> to instantly claim yields directly to <code>@CryptoBot</code>.\n"
-        "• Having issues? Tap <b>💬 Support Desk</b> to reach the administrative team."
+        "• Tap <b>📤 Withdraw USDT</b> to claim directly to "
+        "<code>@CryptoBot</code>.\n"
+        "• Tap <b>💬 Support Desk</b> to reach the team."
     )
     bot.send_message(message.chat.id, help_text, parse_mode="HTML")
 
@@ -186,12 +216,15 @@ def send_help_info(message):
 def view_tasks(message):
     user_id = message.from_user.id
     tasks = database.fetch_query(
-        "SELECT id, description, reward, max_claims, claims_count, max_user_claims FROM tasks WHERE is_active = 1 AND claims_count < max_claims"
+        "SELECT id, description, reward, max_claims, "
+        "claims_count, max_user_claims FROM tasks "
+        "WHERE is_active = 1 AND claims_count < max_claims"
     )
     if not tasks:
         bot.send_message(
             message.chat.id, 
-            "🌐 <b>No Quests Available</b>\n━━━━━━━━━━━━━━━━━━━━\nAll standard pools are currently filled. Check back shortly for new contract deployments.",
+            "🌐 <b>No Quests Available</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            "All pools are filled. Check back shortly.",
             parse_mode="HTML"
         )
         return
@@ -206,7 +239,8 @@ def view_tasks(message):
         task_id, desc, reward, max_claims, claims_count, max_user_claims = task
         
         user_submissions_count = database.fetch_query(
-            "SELECT COUNT(*) FROM submissions WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
+            "SELECT COUNT(*) FROM submissions "
+            "WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
             (user_id, task_id)
         )[0][0]
         
@@ -214,16 +248,24 @@ def view_tasks(message):
             continue
             
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Submit Proof", callback_data=f"submit_{task_id}"))
+        markup.add(
+            types.InlineKeyboardButton(
+                "Submit Proof", callback_data=f"submit_{task_id}"
+            )
+        )
         
-        claim_limit_type = "One-time" if max_user_claims == 1 else f"Max {max_user_claims} per user"
+        claim_limit_type = (
+            "One-time" if max_user_claims == 1 
+            else f"Max {max_user_claims} per user"
+        )
         
         task_card = (
             f"📋 <b>Quest ID: #{task_id}</b>\n\n"
             f"📝 <b>Requirements:</b>\n{desc}\n\n"
             f"💰 <b>Allocation:</b> <code>{reward:.2f} USDT</code>\n"
-            f"👥 <b>Pool Status:</b> {claims_count} / {max_claims} spots filled\n"
-            f"🔒 <b>Limit Type:</b> {claim_limit_type} ({user_submissions_count}/{max_user_claims} claimed)"
+            f"👥 <b>Pool Status:</b> {claims_count}/{max_claims} spots filled\n"
+            f"🔒 <b>Limit Type:</b> {claim_limit_type} "
+            f"({user_submissions_count}/{max_user_claims} claimed)"
         )
         
         try:
@@ -239,15 +281,17 @@ def view_tasks(message):
 @bot.message_handler(func=lambda message: message.text == "💼 Web3 Wallet")
 def check_balance(message):
     user_id = message.from_user.id
-    user = database.fetch_query("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    user = database.fetch_query(
+        "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+    )
     if user:
         balance = user[0][0]
         wallet_card = (
             f"💼 <b>TaskFarmer Dashboard</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 <b>Available Balance:</b> <code>{balance:.2f} USDT</code>\n\n"
-            f"🔐 <i>Secure off-chain execution allows seamless transfers straight "
-            f"into your @CryptoBot account.</i>"
+            f"🔐 <i>Secure off-chain execution allows seamless "
+            f"transfers straight into your @CryptoBot account.</i>"
         )
         bot.send_message(
             message.chat.id, 
@@ -259,7 +303,10 @@ def check_balance(message):
 @bot.message_handler(func=lambda message: message.text == "⚡ Daily Claim")
 def claim_daily_bonus(message):
     user_id = message.from_user.id
-    user = database.fetch_query("SELECT check_in_count, last_check_in FROM users WHERE user_id = ?", (user_id,))
+    user = database.fetch_query(
+        "SELECT check_in_count, last_check_in "
+        "FROM users WHERE user_id = ?", (user_id,)
+    )
     
     if not user:
         return
@@ -269,7 +316,8 @@ def claim_daily_bonus(message):
     if check_in_count >= 5:
         bot.send_message(
             message.chat.id, 
-            "🔒 <b>Allocation Exceeded</b>\n━━━━━━━━━━━━━━━━━━━━\nYou have completed all 5 allocations of your early supporter program.",
+            "🔒 <b>Allocation Exceeded</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            "You have completed your 5-day welcome check-in program.",
             parse_mode="HTML"
         )
         return
@@ -279,7 +327,8 @@ def claim_daily_bonus(message):
     if last_check_in == today_str:
         bot.send_message(
             message.chat.id, 
-            "⏳ <b>Cooldown Active</b>\n━━━━━━━━━━━━━━━━━━━━\nYour daily reward allocation resets in 24 hours. Check back tomorrow.",
+            "⏳ <b>Cooldown Active</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            "Your allocation resets in 24 hours. Check back tomorrow.",
             parse_mode="HTML"
         )
         return
@@ -288,7 +337,8 @@ def claim_daily_bonus(message):
     new_count = check_in_count + 1
     
     database.execute_query(
-        "UPDATE users SET check_in_count = ?, last_check_in = ?, balance = balance + ? WHERE user_id = ?",
+        "UPDATE users SET check_in_count = ?, last_check_in = ?, "
+        "balance = balance + ? WHERE user_id = ?",
         (new_count, today_str, reward, user_id)
     )
     
@@ -316,8 +366,8 @@ def send_referral_link(message):
     ref_card = (
         f"👥 <b>Web3 Referral Network</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Expand the TaskFarmer ecosystem and earn rewards whenever new users "
-        f"register using your partner link.\n\n"
+        f"Expand the TaskFarmer ecosystem and earn rewards whenever "
+        f"new users register using your partner link.\n\n"
         f"💰 <b>Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
         f"🔗 <b>Your Partner Link:</b>\n<code>{ref_link}</code>"
     )
@@ -334,10 +384,12 @@ def prompt_support_message(message):
     bot.send_message(
         message.chat.id, 
         "💬 <b>Helpdesk Terminal</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        "State your issue or inquiry below. A support technician will review your submission.",
+        "State your inquiry below. A technician will review it.",
         parse_mode="HTML"
     )
-    bot.register_next_step_handler(message, send_support_message_to_admin)
+    bot.register_next_step_handler(
+        message, send_support_message_to_admin
+    )
 
 def send_support_message_to_admin(message):
     user_id = message.from_user.id
@@ -345,7 +397,9 @@ def send_support_message_to_admin(message):
     text = message.text
     
     if not text:
-        bot.send_message(message.chat.id, "Inquiry invalid. Ticket creation terminated.")
+        bot.send_message(
+            message.chat.id, "Inquiry invalid. Canceled."
+        )
         return
 
     safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
@@ -355,13 +409,13 @@ def send_support_message_to_admin(message):
         f"📩 <b>New Ticket Received</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 <b>User:</b> @{username} (<code>{user_id}</code>)\n"
         f"📝 <b>Details:</b> {safe_text}\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"Reply using: <code>/reply {user_id} &lt;message&gt;</code>",
+        f"Reply: <code>/reply {user_id} &lt;message&gt;</code>",
         parse_mode="HTML"
     )
     bot.send_message(
         message.chat.id, 
         "✅ <b>Ticket Created</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Your inquiry has been logged. An administrator will reply to your inbox directly.",
+        "Your inquiry has been logged. Admin will reply directly.",
         parse_mode="HTML"
     )
 
@@ -372,7 +426,11 @@ def admin_reply_support(message):
         
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        bot.send_message(message.chat.id, "Format error. Use: <code>/reply &lt;user_id&gt; &lt;message&gt;</code>", parse_mode="HTML")
+        bot.send_message(
+            message.chat.id, 
+            "Format error. Use: <code>/reply ID &lt;message&gt;</code>", 
+            parse_mode="HTML"
+        )
         return
         
     try:
@@ -381,11 +439,16 @@ def admin_reply_support(message):
         
         bot.send_message(
             target_user_id,
-            f"💬 <b>Inbound Support Dispatch:</b>\n━━━━━━━━━━━━━━━━━━━━\n{reply_text}"
+            f"💬 <b>Inbound Support Dispatch:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n{reply_text}"
         )
-        bot.send_message(message.chat.id, f"Reply transmitted to user <code>{target_user_id}</code>.", parse_mode="HTML")
+        bot.send_message(
+            message.chat.id, 
+            f"Reply sent to user <code>{target_user_id}</code>.", 
+            parse_mode="HTML"
+        )
     except Exception as e:
-        bot.send_message(message.chat.id, f"Failed to deliver message: {e}")
+        bot.send_message(message.chat.id, f"Failed to deliver: {e}")
 
 # --- SUBMISSION FLOW ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("submit_"))
@@ -394,7 +457,8 @@ def handle_submit_request(call):
     user_id = call.message.chat.id
     
     task = database.fetch_query(
-        "SELECT description, reward, max_claims, claims_count, max_user_claims FROM tasks WHERE id = ?", (task_id,)
+        "SELECT description, reward, max_claims, claims_count, "
+        "max_user_claims FROM tasks WHERE id = ?", (task_id,)
     )
     if not task:
         bot.send_message(user_id, "Quest not found.")
@@ -407,23 +471,30 @@ def handle_submit_request(call):
         return
         
     user_submissions_count = database.fetch_query(
-        "SELECT COUNT(*) FROM submissions WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
+        "SELECT COUNT(*) FROM submissions "
+        "WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
         (user_id, task_id)
     )[0][0]
     
     if user_submissions_count >= max_user_claims:
-        bot.send_message(user_id, f"❌ You have reached your maximum claim limit of {max_user_claims} for this quest.")
+        bot.send_message(
+            user_id, 
+            f"❌ You have reached your limit of {max_user_claims}."
+        )
         return
     
     if description.strip().upper().startswith("JOIN:"):
         target_channel = description.replace("JOIN:", "").strip()
-        bot.send_message(user_id, f"Parsing metadata for {target_channel}...")
+        bot.send_message(
+            user_id, f"Parsing metadata for {target_channel}..."
+        )
         
         is_member = check_telegram_membership(target_channel, user_id)
         
         if is_member:
             database.execute_query(
-                "INSERT INTO submissions (user_id, task_id, proof, status) VALUES (?, ?, 'Auto-verified', 'APPROVED')",
+                "INSERT INTO submissions (user_id, task_id, proof, status) "
+                "VALUES (?, ?, 'Auto-verified', 'APPROVED')",
                 (user_id, task_id)
             )
             database.execute_query(
@@ -431,24 +502,26 @@ def handle_submit_request(call):
                 (reward, user_id)
             )
             database.execute_query(
-                "UPDATE tasks SET claims_count = claims_count + 1 WHERE id = ?",
-                (task_id,)
+                "UPDATE tasks SET claims_count = claims_count + 1 "
+                "WHERE id = ?", (task_id,)
             )
             bot.send_message(
                 user_id, 
-                f"✅ <b>Quest Verification Successful!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"<code>{reward:.2f} USDT</code> has been settled in your Web3 Wallet.",
+                f"✅ <b>Quest Verification Successful!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>{reward:.2f} USDT</code> added to your wallet.",
                 parse_mode="HTML"
             )
-            # Handle referral logic validation
-            user_info = database.fetch_query("SELECT username FROM users WHERE user_id = ?", (user_id,))
+            user_info = database.fetch_query(
+                "SELECT username FROM users WHERE user_id = ?", (user_id,)
+            )
             username = user_info[0][0] if user_info else "Unknown"
             handle_referral_credit(user_id, username)
         else:
             bot.send_message(
                 user_id, 
                 f"❌ <b>Identity Unverified</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"Verification failed for {target_channel}. Join the target space, then retry.",
+                f"Please join {target_channel} and retry.",
                 parse_mode="HTML"
             )
             
@@ -456,10 +529,12 @@ def handle_submit_request(call):
         bot.send_message(
             user_id, 
             f"ℹ️ <b>Manual Proof Required</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"Please submit the verification proof below. You can send a text or **upload a screenshot/image** directly:",
+            f"Please upload a screenshot or send text proof:",
             parse_mode="HTML"
         )
-        bot.register_next_step_handler(call.message, process_submission, task_id)
+        bot.register_next_step_handler(
+            call.message, process_submission, task_id
+        )
 
 def process_submission(message, task_id):
     user_id = message.from_user.id
@@ -470,25 +545,29 @@ def process_submission(message, task_id):
     elif message.text:
         proof = message.text.replace("<", "&lt;").replace(">", "&gt;")
     else:
-        bot.send_message(message.chat.id, "Please upload a valid image or send a text proof.")
+        bot.send_message(
+            message.chat.id, "Please upload an image or text proof."
+        )
         return
 
     database.execute_query(
-        "INSERT INTO submissions (user_id, task_id, proof) VALUES (?, ?, ?)",
-        (user_id, task_id, proof)
+        "INSERT INTO submissions (user_id, task_id, proof) "
+        "VALUES (?, ?, ?)", (user_id, task_id, proof)
     )
     bot.send_message(
         message.chat.id, 
         "✅ <b>Proof Registered</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Your quest proof is queued. Auditors will process it shortly.",
+        "Your quest proof is queued. Auditors will process it.",
         parse_mode="HTML"
     )
 
-# --- SECURE WITHDRAWAL WITH RACE CONDITION PROTECTION ---
+# --- SECURE WITHDRAWAL ---
 @bot.message_handler(func=lambda message: message.text == "📤 Withdraw USDT")
 def withdraw_request(message):
     user_id = message.from_user.id
-    user = database.fetch_query("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    user = database.fetch_query(
+        "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+    )
     
     if not user:
         return
@@ -496,19 +575,21 @@ def withdraw_request(message):
     balance = user[0][0]
     
     if balance <= 0:
-        bot.send_message(message.chat.id, "❌ Insufficient balance for withdrawal. Complete active quests to earn.")
+        bot.send_message(
+            message.chat.id, "❌ Balance insufficient."
+        )
         return
         
     bot.send_message(
         message.chat.id, 
-        f"⚡ <b>Broadcasting transaction to send {balance:.4f} USDT...</b>",
+        f"⚡ <b>Broadcasting transaction...</b>",
         parse_mode="HTML"
     )
     
-    # 1. Debits the balance immediately in DB first (double spend protection)
-    database.execute_query("UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,))
+    database.execute_query(
+        "UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,)
+    )
     
-    # 2. Initiate payout transaction
     success, reason = send_crypto_pay_transfer(user_id, balance)
     
     if success:
@@ -516,27 +597,32 @@ def withdraw_request(message):
             message.chat.id, 
             f"✅ <b>Withdrawal Confirmed!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
             f"**Transferred:** <code>{balance:.4f} USDT</code>\n"
-            f"Your funds are settled. Open @CryptoBot to interact with your balance.",
+            f"Claim completed directly to your @CryptoBot wallet.",
             parse_mode="HTML"
         )
     else:
-        # 3. Refund back on failure
-        database.execute_query("UPDATE users SET balance = balance + ? WHERE user_id = ?", (balance, user_id))
+        database.execute_query(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+            (balance, user_id)
+        )
         bot.send_message(
             message.chat.id, 
             f"❌ <b>Transaction Rejected</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"The network returned an execution error:\n<code>{reason}</code>\n\n"
-            f"Your funds have been refunded safely to your balance.",
+            f"Error: <code>{reason}</code>\n\n"
+            f"Funds have been refunded safely to your balance.",
             parse_mode="HTML"
         )
 
 # --- ADMIN PANEL ---
-@bot.message_handler(func=lambda message: message.text == "⚙️ Admin Console" and is_admin(message.from_user.id))
+@bot.message_handler(
+    func=lambda message: message.text == "⚙️ Admin Console" 
+    and is_admin(message.from_user.id)
+)
 def admin_panel(message):
     bot.send_message(
         message.chat.id, 
         "⚙️ <b>TaskFarmer Administration Console</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        "Deploy contracts, audit quest entries, and broadcast global system notifications.", 
+        "Audit quest entries, and broadcast system notifications.", 
         reply_markup=admin_keyboard(),
         parse_mode="HTML"
     )
@@ -544,64 +630,87 @@ def admin_panel(message):
 # Create Quest - Step 1: Get description
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_task")
 def admin_add_task_start(call):
-    bot.send_message(call.message.chat.id, "Enter task description (use 'JOIN: @username' for automated Telegram checks):")
+    bot.send_message(
+        call.message.chat.id, "Enter task description:"
+    )
     bot.register_next_step_handler(call.message, admin_add_task_desc)
 
 # Create Quest - Step 2: Get reward
 def admin_add_task_desc(message):
     desc = message.text
-    bot.send_message(message.chat.id, "Enter reward amount (in USDT, numbers only):")
+    bot.send_message(
+        message.chat.id, "Enter reward amount (numbers only):"
+    )
     bot.register_next_step_handler(message, admin_add_task_reward, desc)
 
 # Create Quest - Step 3: Get global pool limit
 def admin_add_task_reward(message, desc):
     try:
         reward = float(message.text)
-        bot.send_message(message.chat.id, "Enter maximum global claim limit (number of times this task can be completed globally):")
-        bot.register_next_step_handler(message, admin_add_task_limit, desc, reward)
+        bot.send_message(
+            message.chat.id, "Enter global claim limit:"
+        )
+        bot.register_next_step_handler(
+            message, admin_add_task_limit, desc, reward
+        )
     except ValueError:
-        bot.send_message(message.chat.id, "Invalid reward amount. Task creation canceled.")
+        bot.send_message(
+            message.chat.id, "Invalid reward. Canceled."
+        )
 
-# Create Quest - Step 4: Write task as INACTIVE first, then offer claim limit choices (Safe Concurrent Insert)
+# Create Quest - Step 4: Write task as INACTIVE first
 def admin_add_task_limit(message, desc, reward):
     try:
         limit = int(message.text)
         
-        # Concurrently safe: insert returning exact generated ID
         if os.environ.get("DATABASE_URL"):
             task_id = database.execute_query(
-                "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0) RETURNING id",
+                "INSERT INTO tasks "
+                "(description, reward, max_claims, is_active) "
+                "VALUES (?, ?, ?, 0) RETURNING id",
                 (desc, reward, limit)
             )
         else:
             task_id = database.execute_query(
-                "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0)",
+                "INSERT INTO tasks "
+                "(description, reward, max_claims, is_active) "
+                "VALUES (?, ?, ?, 0)",
                 (desc, reward, limit)
             )
-            if not task_id: # SQLite lastrowid backup query
+            if not task_id: 
                 task_id = database.fetch_query(
-                    "SELECT id FROM tasks WHERE description = ? AND reward = ? ORDER BY id DESC LIMIT 1",
+                    "SELECT id FROM tasks "
+                    "WHERE description = ? AND reward = ? "
+                    "ORDER BY id DESC LIMIT 1",
                     (desc, reward)
                 )[0][0]
         
         markup = types.InlineKeyboardMarkup()
         markup.add(
-            types.InlineKeyboardButton("🔒 One-time Claim", callback_data=f"setclaim_single_{task_id}"),
-            types.InlineKeyboardButton("🔄 Multiple Claims", callback_data=f"setclaim_multi_{task_id}")
+            types.InlineKeyboardButton(
+                "🔒 One-time Claim", 
+                callback_data=f"setclaim_single_{task_id}"
+            ),
+            types.InlineKeyboardButton(
+                "🔄 Multiple Claims", 
+                callback_data=f"setclaim_multi_{task_id}"
+            )
         )
         bot.send_message(
             message.chat.id, 
             "Configure user submission limits:\n\n"
-            "• <b>One-time Claim:</b> Users can complete this task only once.\n"
-            "• <b>Multiple Claims:</b> Users can submit proof multiple times up to your set limit.",
+            "• <b>One-time Claim:</b> Users can complete only once.\n"
+            "• <b>Multiple Claims:</b> Users can submit multiple times.",
             reply_markup=markup,
             parse_mode="HTML"
         )
     except ValueError:
-        bot.send_message(message.chat.id, "Invalid limit number. Task creation canceled.")
+        bot.send_message(message.chat.id, "Invalid limit. Canceled.")
 
-# Step 5: Database-driven Callback handler (Secure Callback Limits)
-@bot.callback_query_handler(func=lambda call: call.data.startswith("setclaim_"))
+# Step 5: Database-driven Callback handler
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("setclaim_")
+)
 def handle_claimtype_selection(call):
     parts = call.data.split("_")
     action = parts[1]
@@ -609,11 +718,11 @@ def handle_claimtype_selection(call):
     
     if action == "single":
         database.execute_query(
-            "UPDATE tasks SET max_user_claims = 1, is_active = 1 WHERE id = ?",
-            (task_id,)
+            "UPDATE tasks SET max_user_claims = 1, is_active = 1 "
+            "WHERE id = ?", (task_id,)
         )
         bot.edit_message_text(
-            "✅ <b>Quest activated successfully!</b> (One-time Claim enabled)", 
+            "✅ <b>Quest activated!</b> (One-time Claim enabled)", 
             chat_id=call.message.chat.id, 
             message_id=call.message.message_id,
             parse_mode="HTML"
@@ -622,81 +731,109 @@ def handle_claimtype_selection(call):
     elif action == "multi":
         bot.send_message(
             call.message.chat.id, 
-            "Enter maximum allowed submissions per individual user (numbers only):"
+            "Enter maximum allowed submissions per individual user:"
         )
-        bot.register_next_step_handler(call.message, admin_add_task_user_limit, task_id)
+        bot.register_next_step_handler(
+            call.message, admin_add_task_user_limit, task_id
+        )
 
 # Step 6: Save user limit & activate task
 def admin_add_task_user_limit(message, task_id):
     try:
         user_limit = int(message.text)
         database.execute_query(
-            "UPDATE tasks SET max_user_claims = ?, is_active = 1 WHERE id = ?",
-            (user_limit, task_id)
+            "UPDATE tasks SET max_user_claims = ?, is_active = 1 "
+            "WHERE id = ?", (user_limit, task_id)
         )
         bot.send_message(
             message.chat.id, 
-            f"✅ <b>Quest activated successfully!</b> (Multiple claims limit set to {user_limit} per user)",
+            f"✅ <b>Quest activated!</b> (Multiple claims "
+            f"limit set to {user_limit} per user)",
             parse_mode="HTML"
         )
     except ValueError:
-        bot.send_message(message.chat.id, "Invalid number. Quest creation canceled.")
+        bot.send_message(message.chat.id, "Invalid number. Canceled.")
 
-# Admin Broadcast Flow with strict API rate limit compliance
+# Admin Broadcast Flow
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def admin_broadcast_start(call):
-    bot.send_message(call.message.chat.id, "Enter message to broadcast to ALL users:")
-    bot.register_next_step_handler(call.message, admin_broadcast_process)
+    bot.send_message(
+        call.message.chat.id, "Enter message to broadcast:"
+    )
+    bot.register_next_step_handler(
+        call.message, admin_broadcast_process
+    )
 
 def admin_broadcast_process(message):
     broadcast_text = message.text
     if not broadcast_text:
-        bot.send_message(message.chat.id, "Broadcast message cannot be empty.")
+        bot.send_message(
+            message.chat.id, "Message cannot be empty."
+        )
         return
         
     users = database.fetch_query("SELECT user_id FROM users")
     success_count = 0
     fail_count = 0
     
-    bot.send_message(message.chat.id, f"Broadcasting message to {len(users)} users. Please wait...")
+    bot.send_message(
+        message.chat.id, "Broadcasting. Please wait..."
+    )
     
     for u in users:
         target_id = u[0]
         try:
-            bot.send_message(target_id, f"📢 <b>System Broadcast</b>\n━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", parse_mode="HTML")
+            bot.send_message(
+                target_id, 
+                f"📢 <b>System Broadcast</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", 
+                parse_mode="HTML"
+            )
             success_count += 1
-            # Rate limiting compliant delay (~20 msgs / second max)
             time.sleep(0.05)
         except Exception:
             fail_count += 1
             
-    bot.send_message(message.chat.id, f"Broadcast complete.\n\nSent: {success_count}\nFailed: {fail_count}")
+    bot.send_message(
+        message.chat.id, 
+        f"Broadcast complete.\n\n"
+        f"Sent: {success_count}\nFailed: {fail_count}"
+    )
 
-# Verify Submissions Flow (Secure DB-loaded IDs)
-@bot.callback_query_handler(func=lambda call: call.data == "admin_review_submissions")
+# Verify Submissions Flow
+@bot.callback_query_handler(
+    func=lambda call: call.data == "admin_review_submissions"
+)
 def admin_review_submissions(call):
     submissions = database.fetch_query(
-        """SELECT s.id, s.user_id, s.proof, t.reward, t.description, t.id 
-           FROM submissions s 
-           JOIN tasks t ON s.task_id = t.id 
-           WHERE s.status = 'PENDING' LIMIT 5"""
+        "SELECT s.id, s.user_id, s.proof, t.reward, "
+        "t.description, t.id "
+        "FROM submissions s "
+        "JOIN tasks t ON s.task_id = t.id "
+        "WHERE s.status = 'PENDING' LIMIT 5"
     )
     
     if not submissions:
-        bot.send_message(call.message.chat.id, "No pending quest audits.")
+        bot.send_message(
+            call.message.chat.id, "No pending quest audits."
+        )
         return
         
     for sub in submissions:
         sub_id, user_id, proof, reward, desc, task_id = sub
         markup = types.InlineKeyboardMarkup()
         markup.add(
-            # Simplified callback mapping payloads preventing 64-byte limit overflow
-            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{sub_id}"),
-            types.InlineKeyboardButton("❌ Reject", callback_data=f"reject_{sub_id}")
+            types.InlineKeyboardButton(
+                "✅ Approve", callback_data=f"approve_{sub_id}"
+            ),
+            types.InlineKeyboardButton(
+                "❌ Reject", callback_data=f"reject_{sub_id}"
+            )
         )
         
         info_header = (
-            f"<b>Verification Ticket #{sub_id}</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Verification Ticket #{sub_id}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
             f"📋 <b>Quest Details:</b> {desc}\n"
             f"💰 <b>Pool Allocation:</b> <code>{reward:.2f} USDT</code>"
@@ -715,39 +852,118 @@ def admin_review_submissions(call):
             else:
                 bot.send_message(
                     call.message.chat.id,
-                    f"{info_header}\n📝 <b>Client Text Proof:</b> {proof}",
+                    f"{info_header}\n📝 <b>Text Proof:</b> {proof}",
                     parse_mode="HTML",
                     reply_markup=markup
                 )
         except Exception as e:
             print(f"Failed to send submission card: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") or call.data.startswith("reject_"))
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("approve_") 
+    or call.data.startswith("reject_")
+)
 def handle_review_decision(call):
     parts = call.data.split("_")
     action = parts[0]
     sub_id = int(parts[1])
     
-    # Load submission details securely from DB to prevent callback tampering
     sub_data = database.fetch_query(
-        """SELECT s.user_id, t.reward, t.id, s.status, u.username
-           FROM submissions s 
-           JOIN tasks t ON s.task_id = t.id 
-           JOIN users u ON s.user_id = u.user_id
-           WHERE s.id = ?""",
+        "SELECT s.user_id, t.reward, t.id, s.status, u.username "
+        "FROM submissions s "
+        "JOIN tasks t ON s.task_id = t.id "
+        "JOIN users u ON s.user_id = u.user_id "
+        "WHERE s.id = ?",
         (sub_id,)
     )
     
     if not sub_data or sub_data[0][3] != 'PENDING':
-        bot.answer_callback_query(call.id, "Error: This submission has already been processed.")
+        bot.answer_callback_query(
+            call.id, "Error: Already processed."
+        )
         return
         
     user_id, reward, task_id, status, username = sub_data[0]
     
     if action == "approve":
-        # Check global limit
-        task = database.fetch_query("SELECT max_claims, claims_count FROM tasks WHERE id = ?", (task_id,))
+        task = database.fetch_query(
+            "SELECT max_claims, claims_count FROM tasks WHERE id = ?", 
+            (task_id,)
+        )
         if task:
             max_claims, claims_count = task[0]
             if claims_count >= max_claims:
-                bot.send_message(call.message.chat.id, "Approval error: Pool
+                bot.send_message(
+                    call.message.chat.id, 
+                    "Approval error: Pool is exhausted."
+                )
+                return
+        
+        database.execute_query(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+            (reward, user_id)
+        )
+        database.execute_query(
+            "UPDATE submissions SET status = 'APPROVED' WHERE id = ?", 
+            (sub_id,)
+        )
+        database.execute_query(
+            "UPDATE tasks SET claims_count = claims_count + 1 "
+            "WHERE id = ?", (task_id,)
+        )
+        
+        try:
+            bot.send_message(
+                user_id, 
+                f"🎉 <b>Quest Approved!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"Ticket #{sub_id} passed validation.\n"
+                f"💰 <b>Token Credit:</b> <code>{reward:.2f} USDT</code>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            print(f"Could not notify user {user_id}: {e}")
+            
+        handle_referral_credit(user_id, username)
+        
+        if call.message.photo:
+            bot.edit_message_caption(
+                "Audit Result: APPROVED ✅", 
+                chat_id=call.message.chat.id, 
+                message_id=call.message.message_id
+            )
+        else:
+            bot.edit_message_text(
+                "Audit Result: APPROVED ✅", 
+                chat_id=call.message.chat.id, 
+                message_id=call.message.message_id
+            )
+        
+    elif action == "reject":
+        database.execute_query(
+            "UPDATE submissions SET status = 'REJECTED' WHERE id = ?", 
+            (sub_id,)
+        )
+        if call.message.photo:
+            bot.edit_message_caption(
+                "Audit Result: REJECTED ❌", 
+                chat_id=call.message.chat.id, 
+                message_id=call.message.message_id
+            )
+        else:
+            bot.edit_message_text(
+                "Audit Result: REJECTED ❌", 
+                chat_id=call.message.chat.id, 
+                message_id=call.message.message_id
+            )
+
+
+# --- START THREADS (SAFE CONTEXT RUNNER) ---
+if __name__ == "__main__":
+    bot_thread = threading.Thread(
+        target=lambda: bot.infinity_polling()
+    )
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    print("TaskFarmer decentralized core active...")
+    run_web_server()
