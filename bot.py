@@ -296,8 +296,8 @@ def send_referral_link(message):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Expand the TaskFarmer ecosystem and earn rewards whenever new users "
         f"register using your partner link.\n\n"
-        f"💰 <b>Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
-        f"🔗 <b>Your Partner Link:</b>\n<code>{ref_link}</code>"
+        f"💰 **Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
+        f"🔗 **Your Partner Link:</b>\n<code>{ref_link}</code>"
     )
     
     bot.send_message(
@@ -716,14 +716,12 @@ def handle_review_decision(call):
         database.execute_query("UPDATE submissions SET status = 'REJECTED' WHERE id = ?", (sub_id,))
         bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
+# --- SAFE POLLING START (GLOBAL RUNNER) ---
+# Start the Telegram bot polling immediately when the module loads
+bot_thread = threading.Thread(target=lambda: bot.infinity_polling())
+bot_thread.daemon = True
+bot_thread.start()
 
-# --- START THREADS (GLOBAL) ---
 if __name__ == "__main__":
-    # Start Telegram bot polling in a background thread
-    bot_thread = threading.Thread(target=lambda: bot.infinity_polling())
-    bot_thread.daemon = True
-    bot_thread.start()
-    
-    print("TaskFarmer decentralized core active...")
     # Start the Flask web server on the main thread to bind to Render's port
     run_web_server()
