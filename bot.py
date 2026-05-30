@@ -371,7 +371,7 @@ def handle_submit_request(call):
         bot.send_message(user_id, "❌ This pool limit has been reached.")
         return
     
-    # Auto Telegram join logic
+    # Auto Telegram join logic (Must strictly start with "JOIN:")
     if description.strip().upper().startswith("JOIN:"):
         target_channel = description.replace("JOIN:", "").strip()
         bot.send_message(user_id, f"Parsing metadata for {target_channel}...")
@@ -427,11 +427,9 @@ def process_submission(message, task_id):
     
     # Check if user uploaded a screenshot/photo
     if message.photo:
-        # Get the file ID of the largest photo size
         file_id = message.photo[-1].file_id
         proof = f"PHOTO:{file_id}"
     elif message.text:
-        # Escape HTML tags from proof text inputs
         proof = message.text.replace("<", "&lt;").replace(">", "&gt;")
     else:
         bot.send_message(message.chat.id, "Please upload a valid image or send a text proof.")
@@ -580,7 +578,7 @@ def admin_review_submissions(call):
             f"💰 **Pool Allocation:** `{reward:.2f} USDT`"
         )
         
-        # If the proof is a photo, send it natively as a photo message with buttons
+        # Display image natively if uploaded by user
         if str(proof).startswith("PHOTO:"):
             file_id = str(proof).replace("PHOTO:", "")
             bot.send_photo(
@@ -637,18 +635,20 @@ def handle_review_decision(call):
         database.execute_query("UPDATE submissions SET status = 'REJECTED' WHERE id = ?", (sub_id,))
         bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
-# --- START THREADS ---
+
+# --- START THREADS (GLOBAL - GUNICORN COMPATIBLE) ---
+def run_bot_polling():
+    print("TaskFarmer decentralized core active and polling...")
+    try:
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"Bot polling crashed: {e}")
+
+# Start the Telegram bot polling in a background thread immediately on module load
+bot_thread = threading.Thread(target=run_bot_polling)
+bot_thread.daemon = True
+bot_thread.start()
+
 if __name__ == "__main__":
-    # Start web server thread
-    web_thread = threading.Thread(target=run_web_server)
-    web_thread.daemon = True
-    web_thread.start()
-    
-    # Start bot polling on main thread
-    bot_thread = threading.Thread(target=lambda: bot.infinity_polling())
-    bot_thread.daemon = True
-    bot_thread.start()
-    
-    print("TaskFarmer decentralized core active...")
-    # Keep main thread alive
-    web_thread.join()
+    # This is only executed when running locally, not on Render Gunicorn
+    run_web_server()
