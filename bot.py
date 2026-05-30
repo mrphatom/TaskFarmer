@@ -34,9 +34,6 @@ except ValueError:
 bot = telebot.TeleBot(API_TOKEN)
 database.init_db()
 
-# Temporary store for admin quest-creation flow state
-temp_task_data = {}
-
 # --- HELPER FUNCTIONS ---
 def is_admin(user_id):
     return user_id == ADMIN_ID
@@ -186,13 +183,12 @@ def view_tasks(message):
     for task in tasks:
         task_id, desc, reward, max_claims, claims_count, max_user_claims = task
         
-        # Check how many times the user has already submitted this task
+        # Check user specific submissions
         user_submissions_count = database.fetch_query(
             "SELECT COUNT(*) FROM submissions WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
             (user_id, task_id)
         )[0][0]
         
-        # If user completed the maximum allowed limits, skip displaying it to them
         if user_submissions_count >= max_user_claims:
             continue
             
@@ -385,12 +381,10 @@ def handle_submit_request(call):
         
     description, reward, max_claims, claims_count, max_user_claims = task[0]
     
-    # Global Pool Limit Check
     if claims_count >= max_claims:
         bot.send_message(user_id, "❌ This pool limit has been reached.")
         return
         
-    # Check how many times the individual user has already submitted
     user_submissions_count = database.fetch_query(
         "SELECT COUNT(*) FROM submissions WHERE user_id = ? AND task_id = ? AND status != 'REJECTED'",
         (user_id, task_id)
@@ -400,7 +394,6 @@ def handle_submit_request(call):
         bot.send_message(user_id, f"❌ You have reached your maximum claim limit of {max_user_claims} for this quest.")
         return
     
-    # Auto Telegram join logic (Must strictly start with "JOIN:")
     if description.strip().upper().startswith("JOIN:"):
         target_channel = description.replace("JOIN:", "").strip()
         bot.send_message(user_id, f"Parsing metadata for {target_channel}...")
@@ -446,7 +439,6 @@ def handle_submit_request(call):
 def process_submission(message, task_id):
     user_id = message.from_user.id
     
-    # Check if user uploaded a screenshot/photo
     if message.photo:
         file_id = message.photo[-1].file_id
         proof = f"PHOTO:{file_id}"
@@ -518,96 +510,100 @@ def admin_panel(message):
 # Create Quest - Step 1: Get description
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_task")
 def admin_add_task_start(call):
-    admin_id = call.from_user.id
-    temp_task_data[admin_id] = {}
     bot.send_message(call.message.chat.id, "Enter task description (use 'JOIN: @username' for automated Telegram checks):")
     bot.register_next_step_handler(call.message, admin_add_task_desc)
 
 # Create Quest - Step 2: Get reward
 def admin_add_task_desc(message):
-    admin_id = message.from_user.id
-    temp_task_data[admin_id]['desc'] = message.text
+    desc = message.text
     bot.send_message(message.chat.id, "Enter reward amount (in USDT, numbers only):")
-    bot.register_next_step_handler(message, admin_add_task_reward)
+    bot.register_next_step_handler(message, admin_add_task_reward, desc)
 
 # Create Quest - Step 3: Get global pool limit
-def admin_add_task_reward(message):
-    admin_id = message.from_user.id
+def admin_add_task_reward(message, desc):
     try:
         reward = float(message.text)
-        temp_task_data[admin_id]['reward'] = reward
         bot.send_message(message.chat.id, "Enter maximum global claim limit (number of times this task can be completed globally):")
-        bot.register_next_step_handler(message, admin_add_task_limit)
+        bot.register_next_step_handler(message, admin_add_task_limit, desc, reward)
     except ValueError:
         bot.send_message(message.chat.id, "Invalid reward amount. Task creation canceled.")
-        temp_task_data.pop(admin_id, None)
 
-# Create Quest - Step 4: Choose claim type (One-time vs Multiple)
-def admin_add_task_limit(message):
-    admin_id = message.from_user.id
+# Create Quest - Step 4: Write task as INACTIVE first, then offer claim limit choices
+def admin_add_task_limit(message, desc, reward):
     try:
         limit = int(message.text)
-        temp_task_data[admin_id]['max_claims'] = limit
         
-        # Present choice keyboard for user limits
+        # Write task to DB immediately as INACTIVE (is_active = 0)
+        database.execute_query(
+            "INSERT INTO tasks (description, reward, max_claims, is_active) VALUES (?, ?, ?, 0)",
+            (desc, reward, limit)
+        )
+        
+        # Retrieve the newly created inactive task ID
+        task_id = database.fetch_query(
+            "SELECT id FROM tasks WHERE description = ? AND reward = ? ORDER BY id DESC LIMIT 1",
+            (desc, reward)
+        )[0][0]
+        
+        # Build markup passing the task_id directly inside the callback data
         markup = types.InlineKeyboardMarkup()
         markup.add(
-            types.InlineKeyboardButton("🔒 One-time Claim", callback_data="admin_claimtype_single"),
-            types.InlineKeyboardButton("🔄 Multiple Claims", callback_data="admin_claimtype_multi")
+            types.InlineKeyboardButton("🔒 One-time Claim", callback_data=f"setclaim_single_{task_id}"),
+            types.InlineKeyboardButton("🔄 Multiple Claims", callback_data=f"setclaim_multi_{task_id}")
         )
         bot.send_message(
             message.chat.id, 
             "Configure user submission limits:\n\n"
-            "• **One-time Claim:** Users can complete this task only once.\n"
-            "• **Multiple Claims:** Users can submit proof multiple times up to your set limit.",
+            "• <b>One-time Claim:</b> Users can complete this task only once.\n"
+            "• <b>Multiple Claims:</b> Users can submit proof multiple times up to your set limit.",
             reply_markup=markup,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     except ValueError:
         bot.send_message(message.chat.id, "Invalid limit number. Task creation canceled.")
-        temp_task_data.pop(admin_id, None)
 
-# Handle selection of claim type
-@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_claimtype_"))
+# Step 5: Database-driven Callback handler (Completely immune to Gunicorn multi-process session loss)
+@bot.callback_query_handler(func=lambda call: call.data.startswith("setclaim_"))
 def handle_claimtype_selection(call):
-    admin_id = call.from_user.id
-    if admin_id not in temp_task_data:
-        bot.send_message(call.message.chat.id, "Session expired. Try again.")
-        return
-        
-    action = call.data.split("_")[2]
+    parts = call.data.split("_")
+    action = parts[1]
+    task_id = int(parts[2])
     
     if action == "single":
-        # Save task immediately with user limit = 1
-        data = temp_task_data.pop(admin_id)
+        # Activate task with user limit = 1
         database.execute_query(
-            "INSERT INTO tasks (description, reward, max_claims, max_user_claims) VALUES (?, ?, ?, ?)",
-            (data['desc'], data['reward'], data['max_claims'], 1)
+            "UPDATE tasks SET max_user_claims = 1, is_active = 1 WHERE id = ?",
+            (task_id,)
         )
-        bot.edit_message_text("✅ Task added successfully! (One-time Claim enabled)", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        bot.edit_message_text(
+            "✅ <b>Quest activated successfully!</b> (One-time Claim enabled)", 
+            chat_id=call.message.chat.id, 
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
         
     elif action == "multi":
-        bot.send_message(call.message.chat.id, "Enter maximum allowed submissions per individual user (numbers only):")
-        bot.register_next_step_handler(call.message, admin_add_task_user_limit)
+        bot.send_message(
+            call.message.chat.id, 
+            "Enter maximum allowed submissions per individual user (numbers only):"
+        )
+        bot.register_next_step_handler(call.message, admin_add_task_user_limit, task_id)
 
-# Create Quest - Step 5: Save multiple user limit
-def admin_add_task_user_limit(message):
-    admin_id = message.from_user.id
-    if admin_id not in temp_task_data:
-        bot.send_message(message.chat.id, "Session expired. Try again.")
-        return
-        
+# Step 6: Save user limit & activate task
+def admin_add_task_user_limit(message, task_id):
     try:
         user_limit = int(message.text)
-        data = temp_task_data.pop(admin_id)
         database.execute_query(
-            "INSERT INTO tasks (description, reward, max_claims, max_user_claims) VALUES (?, ?, ?, ?)",
-            (data['desc'], data['reward'], data['max_claims'], user_limit)
+            "UPDATE tasks SET max_user_claims = ?, is_active = 1 WHERE id = ?",
+            (user_limit, task_id)
         )
-        bot.send_message(message.chat.id, f"✅ Task added successfully! (Multiple claims limit set to {user_limit} per user)")
+        bot.send_message(
+            message.chat.id, 
+            f"✅ <b>Quest activated successfully!</b> (Multiple claims limit set to {user_limit} per user)",
+            parse_mode="HTML"
+        )
     except ValueError:
-        bot.send_message(message.chat.id, "Invalid number. Task creation canceled.")
-        temp_task_data.pop(admin_id, None)
+        bot.send_message(message.chat.id, "Invalid number. Quest creation canceled.")
 
 # Admin Broadcast Flow
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
@@ -667,7 +663,6 @@ def admin_review_submissions(call):
         )
         
         try:
-            # Display image natively if uploaded by user
             if str(proof).startswith("PHOTO:"):
                 file_id = str(proof).replace("PHOTO:", "")
                 bot.send_photo(
@@ -698,7 +693,6 @@ def handle_review_decision(call):
         reward = float(parts[3])
         task_id = int(parts[4])
         
-        # Check global limit
         task = database.fetch_query("SELECT max_claims, claims_count FROM tasks WHERE id = ?", (task_id,))
         if task:
             max_claims, claims_count = task[0]
