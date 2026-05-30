@@ -261,7 +261,7 @@ def claim_daily_bonus(message):
         f"⚡ <b>Daily Reward Claimed!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📈 <b>Milestone:</b> Day {new_count} / 5\n"
-        f"💰 <b>Credit:</b> <code>+{reward:.2f} USDT</code>"
+        f"💰 **Credit:** <code>+{reward:.2f} USDT</code>"
     )
     
     bot.send_message(
@@ -313,7 +313,6 @@ def send_support_message_to_admin(message):
         bot.send_message(message.chat.id, "Inquiry invalid. Ticket creation terminated.")
         return
 
-    # Escaping HTML tags from user input to prevent parsing failures
     safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
 
     bot.send_message(
@@ -418,21 +417,29 @@ def handle_submit_request(call):
         bot.send_message(
             user_id, 
             f"ℹ️ <b>Manual Proof Required</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"Please submit the verification proof (screenshot link, transaction hash, or username) below:",
+            f"Please submit the verification proof below. You can send a text or **upload a screenshot/image** directly:",
             parse_mode="HTML"
         )
         bot.register_next_step_handler(call.message, process_submission, task_id)
 
 def process_submission(message, task_id):
     user_id = message.from_user.id
-    proof = message.text if message.text else "Binary proof submitted"
     
-    # Escaping HTML tags from proof inputs
-    safe_proof = proof.replace("<", "&lt;").replace(">", "&gt;")
+    # Check if user uploaded a screenshot/photo
+    if message.photo:
+        # Get the file ID of the largest photo size
+        file_id = message.photo[-1].file_id
+        proof = f"PHOTO:{file_id}"
+    elif message.text:
+        # Escape HTML tags from proof text inputs
+        proof = message.text.replace("<", "&lt;").replace(">", "&gt;")
+    else:
+        bot.send_message(message.chat.id, "Please upload a valid image or send a text proof.")
+        return
 
     database.execute_query(
         "INSERT INTO submissions (user_id, task_id, proof) VALUES (?, ?, ?)",
-        (user_id, task_id, safe_proof)
+        (user_id, task_id, proof)
     )
     bot.send_message(
         message.chat.id, 
@@ -472,7 +479,7 @@ def withdraw_request(message):
     else:
         bot.send_message(
             message.chat.id, 
-            f"❌ <b>Transaction Rejected</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"❌ **Transaction Rejected**\n━━━━━━━━━━━━━━━━━━━━\n"
             f"The network returned an execution error:\n<code>{reason}</code>\n\n"
             f"Review your settings or submit a helpdesk ticket.",
             parse_mode="HTML"
@@ -565,16 +572,31 @@ def admin_review_submissions(call):
             types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{sub_id}_{user_id}_{reward}_{task_id}"),
             types.InlineKeyboardButton("❌ Reject", callback_data=f"reject_{sub_id}")
         )
-        bot.send_message(
-            call.message.chat.id,
+        
+        info_header = (
             f"**Verification Ticket #{sub_id}**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 **User ID:** <code>{user_id}</code>\n"
+            f"👤 **User ID:** `{user_id}`\n"
             f"📋 **Quest Details:** {desc}\n"
-            f"📝 **Client Proof:** {proof}\n"
-            f"💰 **Pool Allocation:** <code>{reward:.2f} USDT</code>",
-            parse_mode="HTML",
-            reply_markup=markup
+            f"💰 **Pool Allocation:** `{reward:.2f} USDT`"
         )
+        
+        # If the proof is a photo, send it natively as a photo message with buttons
+        if str(proof).startswith("PHOTO:"):
+            file_id = str(proof).replace("PHOTO:", "")
+            bot.send_photo(
+                call.message.chat.id,
+                file_id,
+                caption=info_header,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+        else:
+            bot.send_message(
+                call.message.chat.id,
+                f"{info_header}\n📝 **Client Text Proof:** {proof}",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") or call.data.startswith("reject_"))
 def handle_review_decision(call):
@@ -615,20 +637,18 @@ def handle_review_decision(call):
         database.execute_query("UPDATE submissions SET status = 'REJECTED' WHERE id = ?", (sub_id,))
         bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
-# --- START THREADS (GUNICORN COMPATIBLE) ---
-
-def run_bot_polling():
-    print("TaskFarmer decentralized core active and polling...")
-    try:
-        bot.infinity_polling()
-    except Exception as e:
-        print(f"Bot polling crashed: {e}")
-
-# Start the Telegram bot polling in a background thread immediately when imported
-bot_thread = threading.Thread(target=run_bot_polling)
-bot_thread.daemon = True
-bot_thread.start()
-
-# This block allows local running, while Gunicorn directly uses the 'app' object
+# --- START THREADS ---
 if __name__ == "__main__":
-    run_web_server()
+    # Start web server thread
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.daemon = True
+    web_thread.start()
+    
+    # Start bot polling on main thread
+    bot_thread = threading.Thread(target=lambda: bot.infinity_polling())
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    print("TaskFarmer decentralized core active...")
+    # Keep main thread alive
+    web_thread.join()
