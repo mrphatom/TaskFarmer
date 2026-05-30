@@ -19,7 +19,7 @@ def init_db():
     cursor = conn.cursor()
     
     if DATABASE_URL:
-        # PostgreSQL Schema
+        # PostgreSQL Schema (Updated with max_user_claims)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -38,6 +38,7 @@ def init_db():
                 reward REAL,
                 max_claims INTEGER DEFAULT 999999,
                 claims_count INTEGER DEFAULT 0,
+                max_user_claims INTEGER DEFAULT 1,
                 is_active INTEGER DEFAULT 1
             )
         ''')
@@ -51,7 +52,7 @@ def init_db():
             )
         ''')
     else:
-        # SQLite Schema
+        # SQLite Schema (Updated with max_user_claims)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -70,6 +71,7 @@ def init_db():
                 reward REAL,
                 max_claims INTEGER DEFAULT 999999,
                 claims_count INTEGER DEFAULT 0,
+                max_user_claims INTEGER DEFAULT 1,
                 is_active INTEGER DEFAULT 1
             )
         ''')
