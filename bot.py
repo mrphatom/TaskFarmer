@@ -1,10 +1,24 @@
 import os
 import datetime
+import threading
 import requests
 import telebot
 from telebot import types
+from flask import Flask
 import database
 
+# --- KEEP-ALIVE WEB SERVER FOR RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "TaskFarmer Core is active and operational."
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# --- BOT CONFIGURATION ---
 API_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID_STR = os.environ.get("ADMIN_ID")
 CRYPTO_PAY_TOKEN = os.environ.get("CRYPTO_PAY_TOKEN")
@@ -567,7 +581,13 @@ def handle_review_decision(call):
         database.execute_query("UPDATE submissions SET status = 'REJECTED' WHERE id = ?", (sub_id,))
         bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
-# --- START BOT ---
+# --- START THREADS ---
 if __name__ == "__main__":
+    # Start web server thread
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.daemon = True
+    web_thread.start()
+    
+    # Start bot polling on main thread
     print("TaskFarmer decentralized core active...")
     bot.infinity_polling()
