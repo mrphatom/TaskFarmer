@@ -23,7 +23,7 @@ def init_db():
         )
     ''')
     
-    # Tasks table (Updated with max_claims and claims_count)
+    # Tasks table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
