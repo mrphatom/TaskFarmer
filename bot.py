@@ -615,13 +615,20 @@ def handle_review_decision(call):
         database.execute_query("UPDATE submissions SET status = 'REJECTED' WHERE id = ?", (sub_id,))
         bot.edit_message_text("Audit Result: REJECTED ❌", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
-# --- START THREADS ---
+# --- START THREADS (GUNICORN COMPATIBLE) ---
+
+def run_bot_polling():
+    print("TaskFarmer decentralized core active and polling...")
+    try:
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"Bot polling crashed: {e}")
+
+# Start the Telegram bot polling in a background thread immediately when imported
+bot_thread = threading.Thread(target=run_bot_polling)
+bot_thread.daemon = True
+bot_thread.start()
+
+# This block allows local running, while Gunicorn directly uses the 'app' object
 if __name__ == "__main__":
-    # Start web server thread
-    web_thread = threading.Thread(target=run_web_server)
-    web_thread.daemon = True
-    web_thread.start()
-    
-    # Start bot polling on main thread
-    print("TaskFarmer decentralized core active...")
-    bot.infinity_polling()
+    run_web_server()
