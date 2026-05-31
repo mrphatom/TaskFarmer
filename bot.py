@@ -2,6 +2,7 @@ import os
 import re
 import datetime
 import time
+import threading
 import requests
 import telebot
 from telebot import types
@@ -18,16 +19,12 @@ SOLANA_PAY_KEY = os.environ.get("SOLANA_PAY_KEY")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 if not API_TOKEN or not ADMIN_ID_STR:
-    raise ValueError(
-        "Missing BOT_TOKEN or ADMIN_ID variables."
-    )
+    raise ValueError("Missing BOT_TOKEN or ADMIN_ID variables.")
 
 try:
     ADMIN_ID = int(ADMIN_ID_STR)
 except ValueError:
-    raise ValueError(
-        "ADMIN_ID must be a valid numeric Telegram ID."
-    )
+    raise ValueError("ADMIN_ID must be a valid numeric Telegram ID.")
 
 # Strip colon from bot token for safe, error-free Flask URL routing
 SAFE_ROUTE = API_TOKEN.replace(":", "_")
@@ -35,6 +32,7 @@ SAFE_ROUTE = API_TOKEN.replace(":", "_")
 bot = telebot.TeleBot(API_TOKEN)
 database.init_db()
 
+# Safe in-memory store for incomplete task creation flows
 pending_tasks = {}
 
 # --- HELPER FUNCTIONS ---
@@ -499,7 +497,7 @@ def admin_reply_support(message):
 # --- SUBMISSION FLOW ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("submit_"))
 def handle_submit_request(call):
-    bot.answer_callback_query(call.id)
+    bot.answer_callback_query(call.id)  # FIX #4: Dismiss Telegram's loading spinner
     task_id = int(call.data.split("_")[1])
     user_id = call.message.chat.id
     
@@ -642,10 +640,12 @@ def withdraw_request(message):
         parse_mode="HTML"
     )
     
+    # FIX #3: Secure withdrawal race condition (Deduct DB balance first)
     database.execute_query(
         "UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,)
     )
     
+    # Payout
     success, reason = send_solana_usdc_payout(wallet, balance)
     
     if success:
@@ -659,6 +659,7 @@ def withdraw_request(message):
             parse_mode="HTML"
         )
     else:
+        # Refund on failure
         database.execute_query(
             "UPDATE users SET balance = balance + ? WHERE user_id = ?", 
             (balance, user_id)
@@ -688,7 +689,7 @@ def admin_panel(message):
 # --- ADMIN: CREATE QUEST FLOW ---
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_task")
 def admin_add_task_start(call):
-    bot.answer_callback_query(call.id)
+    bot.answer_callback_query(call.id)  # FIX #4: Dismiss Telegram's loading spinner
     bot.send_message(
         call.message.chat.id, 
         "Enter task description (use 'JOIN: @username' for automated Telegram checks):"
@@ -709,382 +710,4 @@ def admin_add_task_desc(message):
     )
     bot.register_next_step_handler(message, admin_add_task_reward, desc)
 
-def admin_add_task_reward(message, desc):
-    try:
-        reward = float(message.text)
-        if reward <= 0:
-            bot.send_message(
-                message.chat.id, 
-                "❌ Reward must be greater than 0. Task creation canceled."
-            )
-            return
-    except ValueError:
-        bot.send_message(
-            message.chat.id, 
-            "❌ Invalid reward amount. Task creation canceled."
-        )
-        return
-    bot.send_message(
-        message.chat.id, 
-        "Enter maximum global claim limit (total times this task can be completed):"
-    )
-    bot.register_next_step_handler(message, admin_add_task_limit, desc, reward)
-
-def admin_add_task_limit(message, desc, reward):
-    try:
-        limit = int(message.text)
-        if limit <= 0:
-            bot.send_message(
-                message.chat.id, 
-                "❌ Limit must be greater than 0. Task creation canceled."
-            )
-            return
-    except ValueError:
-        bot.send_message(
-            message.chat.id, 
-            "❌ Invalid limit number. Task creation canceled."
-        )
-        return
-
-    markup = types.InlineKeyboardMarkup()
-    pending_tasks[message.chat.id] = {
-        "desc": desc, "reward": reward, "limit": limit
-    }
-
-    markup.add(
-        types.InlineKeyboardButton(
-            "🔒 One-time Claim",  callback_data="setclaim_single"
-        ),
-        types.InlineKeyboardButton(
-            "🔄 Multiple Claims", callback_data="setclaim_multi"
-        )
-    )
-    
-    limit_parts = [
-        "Configure user submission limits:",
-        "",
-        "• <b>One-time Claim:</b> Users can complete only once.",
-        "• <b>Multiple Claims:</b> Users can submit multiple times."
-    ]
-    limit_text = "\n".join(limit_parts)
-    
-    bot.send_message(
-        message.chat.id,
-        limit_text,
-        reply_markup=markup,
-        parse_mode="HTML"
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("setclaim_"))
-def handle_claimtype_selection(call):
-    bot.answer_callback_query(call.id)
-
-    action = call.data.split("_")[1]
-    admin_chat_id = call.message.chat.id
-
-    task_data = pending_tasks.get(admin_chat_id)
-    if not task_data:
-        bot.send_message(
-            admin_chat_id, 
-            "❌ Session expired. Please create the task again."
-        )
-        return
-
-    if action == "single":
-        _finalize_task(admin_chat_id, task_data, max_user_claims=1, call=call)
-
-    elif action == "multi":
-        bot.send_message(
-            admin_chat_id, 
-            "Enter maximum allowed submissions per individual user (numbers only):"
-        )
-        bot.register_next_step_handler(
-            call.message, admin_add_task_user_limit, task_data, call
-        )
-
-def admin_add_task_user_limit(message, task_data, call):
-    try:
-        user_limit = int(message.text)
-        if user_limit <= 0:
-            bot.send_message(
-                message.chat.id, "❌ Must be greater than 0. Try again:"
-            )
-            bot.register_next_step_handler(
-                message, admin_add_task_user_limit, task_data, call
-            )
-            return
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ Invalid number. Try again:")
-        bot.register_next_step_handler(
-            message, admin_add_task_user_limit, task_data, call
-        )
-        return
-
-    _finalize_task(
-        message.chat.id, task_data, max_user_claims=user_limit, call=call
-    )
-
-def _finalize_task(chat_id, task_data, max_user_claims, call=None):
-    try:
-        task_id = database.execute_query(
-            "INSERT INTO tasks "
-            "(description, reward, max_claims, max_user_claims, is_active) "
-            "VALUES (?, ?, ?, ?, 1)",
-            (task_data["desc"], task_data["reward"], 
-             task_data["limit"], max_user_claims)
-        )
-        if not task_id:
-            raise Exception("Database transaction failed.")
-
-        pending_tasks.pop(chat_id, None)
-
-        if call:
-            try:
-                bot.edit_message_text(
-                    f"✅ <b>Quest #{task_id} activated!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📝 {task_data['desc']}\n"
-                    f"💰 {task_data['reward']:.2f} USDC | "
-                    f"👥 Max {task_data['limit']} global | "
-                    f"🔒 {'One-time' if max_user_claims == 1 else f'Up to {max_user_claims} per user'}",
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    parse_mode="HTML"
-                )
-            except Exception:
-                bot.send_message(
-                    chat_id,
-                    f"✅ <b>Quest #{task_id} activated successfully!</b>",
-                    parse_mode="HTML"
-                )
-        else:
-            bot.send_message(
-                chat_id,
-                f"✅ <b>Quest #{task_id} activated successfully!</b>",
-                parse_mode="HTML"
-            )
-
-    except Exception as e:
-        print(f"Task creation error: {e}")
-        bot.send_message(
-            chat_id, 
-            f"❌ Task creation failed: <code>{e}</code>", 
-            parse_mode="HTML"
-        )
-
-# Admin Broadcast Flow
-@bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
-def admin_broadcast_start(call):
-    bot.answer_callback_query(call.id)
-    bot.send_message(
-        call.message.chat.id, "Enter message to broadcast:"
-    )
-    bot.register_next_step_handler(
-        call.message, admin_broadcast_process
-    )
-
-def admin_broadcast_process(message):
-    broadcast_text = message.text
-    if not broadcast_text:
-        bot.send_message(
-            message.chat.id, "Message cannot be empty."
-        )
-        return
-        
-    users = database.fetch_query("SELECT user_id FROM users")
-    success_count = 0
-    fail_count = 0
-    
-    bot.send_message(
-        message.chat.id, "Broadcasting. Please wait..."
-    )
-    
-    for u in users:
-        target_id = u[0]
-        try:
-            bot.send_message(
-                target_id, 
-                f"📢 <b>System Broadcast</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n{broadcast_text}", 
-                parse_mode="HTML"
-            )
-            success_count += 1
-            time.sleep(0.05)
-        except Exception:
-            fail_count += 1
-            
-    bot.send_message(
-        message.chat.id, 
-        f"Broadcast complete.\n\n"
-        f"Sent: {success_count}\nFailed: {fail_count}"
-    )
-
-# Verify Submissions Flow
-@bot.callback_query_handler(
-    func=lambda call: call.data == "admin_review_submissions"
-)
-def admin_review_submissions(call):
-    bot.answer_callback_query(call.id)
-    submissions = database.fetch_query(
-        "SELECT s.id, s.user_id, s.proof, t.reward, "
-        "t.description, t.id "
-        "FROM submissions s "
-        "JOIN tasks t ON s.task_id = t.id "
-        "WHERE s.status = 'PENDING' LIMIT 5"
-    )
-    
-    if not submissions:
-        bot.send_message(
-            call.message.chat.id, "No pending quest audits."
-        )
-        return
-        
-    for sub in submissions:
-        sub_id, user_id, proof, reward, desc, task_id = sub
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton(
-                "✅ Approve", callback_data=f"approve_{sub_id}"
-            ),
-            types.InlineKeyboardButton(
-                "❌ Reject", callback_data=f"reject_{sub_id}"
-            )
-        )
-        
-        info_header = (
-            f"<b>Verification Ticket #{sub_id}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
-            f"📋 <b>Quest Details:</b> {desc}\n"
-            f"💰 <b>Pool Allocation:</b> <code>{reward:.2f} USDC</code>"
-        )
-        
-        try:
-            if str(proof).startswith("PHOTO:"):
-                file_id = str(proof).replace("PHOTO:", "")
-                bot.send_photo(
-                    call.message.chat.id,
-                    file_id,
-                    caption=info_header,
-                    parse_mode="HTML",
-                    reply_markup=markup
-                )
-            else:
-                bot.send_message(
-                    call.message.chat.id,
-                    f"{info_header}\n📝 <b>Text Proof:</b> {proof}",
-                    parse_mode="HTML",
-                    reply_markup=markup
-                )
-        except Exception as e:
-            print(f"Failed to send submission card: {e}")
-
-@bot.callback_query_handler(
-    func=lambda call: call.data.startswith("approve_") 
-    or call.data.startswith("reject_")
-)
-def handle_review_decision(call):
-    bot.answer_callback_query(call.id)
-    parts = call.data.split("_")
-    action = parts[0]
-    sub_id = int(parts[1])
-    
-    sub_data = database.fetch_query(
-        "SELECT s.user_id, t.reward, t.id, s.status, u.username "
-        "FROM submissions s "
-        "JOIN tasks t ON s.task_id = t.id "
-        "JOIN users u ON s.user_id = u.user_id "
-        "WHERE s.id = ?",
-        (sub_id,)
-    )
-    
-    if not sub_data or sub_data[0][3] != 'PENDING':
-        return
-        
-    user_id, reward, task_id, status, username = sub_data[0]
-    
-    if action == "approve":
-        task = database.fetch_query(
-            "SELECT max_claims, claims_count FROM tasks WHERE id = ?", 
-            (task_id,)
-        )
-        if task:
-            max_claims, claims_count = task[0]
-            if claims_count >= max_claims:
-                bot.send_message(
-                    call.message.chat.id, 
-                    "Approval error: Pool is exhausted."
-                )
-                return
-        
-        database.execute_query(
-            "UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-            (reward, user_id)
-        )
-        database.execute_query(
-            "UPDATE submissions SET status = 'APPROVED' WHERE id = ?", 
-            (sub_id,)
-        )
-        database.execute_query(
-            "UPDATE tasks SET claims_count = claims_count + 1 "
-            "WHERE id = ?", (task_id,)
-        )
-        
-        try:
-            bot.send_message(
-                user_id, 
-                f"🎉 <b>Quest Approved!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"Ticket #{sub_id} passed validation.\n"
-                f"💰 <b>Token Credit:</b> <code>{reward:.2f} USDC</code>",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            print(f"Could not notify user {user_id}: {e}")
-            
-        handle_referral_credit(user_id, username)
-        
-        if call.message.photo:
-            bot.edit_message_caption(
-                "Audit Result: APPROVED ✅", 
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id
-            )
-        else:
-            bot.edit_message_text(
-                "Audit Result: APPROVED ✅", 
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id
-            )
-        
-    elif action == "reject":
-        database.execute_query(
-            "UPDATE submissions SET status = 'REJECTED' WHERE id = ?", 
-            (sub_id,)
-        )
-        if call.message.photo:
-            bot.edit_message_caption(
-                "Audit Result: REJECTED ❌", 
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id
-            )
-        else:
-            bot.edit_message_text(
-                "Audit Result: REJECTED ❌", 
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id
-            )
-
-# --- WEBHOOK ON-BOOT CONFIGURATION ---
-if RENDER_URL:
-    try:
-        CLEAN_RENDER_URL = RENDER_URL.rstrip('/')
-        bot.remove_webhook()
-        time.sleep(1) 
-        bot.set_webhook(url=f"{CLEAN_RENDER_URL}/webhook/{SAFE_ROUTE}")
-        print(f"Webhook securely registered at: {CLEAN_RENDER_URL}/webhook/[TOKEN]")
-    except Exception as e:
-        print(f"Failed to register webhook on startup: {e}")
-
-if __name__ == "__main__":
-    print("TaskFarmer Web3 Portal active on Webhook...")
-    run_web_server()
+def
