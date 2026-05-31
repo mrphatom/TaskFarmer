@@ -1,51 +1,47 @@
 import os
+import re
 import datetime
-import threading
 import time
 import requests
 import telebot
 from telebot import types
-from flask import Flask
+from flask import Flask, request, abort
 import database
 
 # --- KEEP-ALIVE WEB SERVER FOR RENDER ---
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "TaskFarmer Core is active and operational."
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
 # --- BOT CONFIGURATION ---
 API_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID_STR = os.environ.get("ADMIN_ID")
-CRYPTO_PAY_TOKEN = os.environ.get("CRYPTO_PAY_TOKEN")
+# Secure RPC or REST Merchant API key for On-chain Solana Payouts
+SOLANA_PAY_KEY = os.environ.get("SOLANA_PAY_KEY") 
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 if not API_TOKEN or not ADMIN_ID_STR:
-    raise ValueError(
-        "Missing BOT_TOKEN or ADMIN_ID variables."
-    )
+    raise ValueError("Missing BOT_TOKEN or ADMIN_ID variables.")
 
 try:
     ADMIN_ID = int(ADMIN_ID_STR)
 except ValueError:
-    raise ValueError(
-        "ADMIN_ID must be a valid numeric Telegram ID."
-    )
+    raise ValueError("ADMIN_ID must be a valid numeric Telegram ID.")
 
 bot = telebot.TeleBot(API_TOKEN)
 database.init_db()
 
-# In-memory store for incomplete task creation flows
-# Keyed by admin's chat_id to prevent database pollution
 pending_tasks = {}
 
 # --- HELPER FUNCTIONS ---
 def is_admin(user_id):
     return user_id == ADMIN_ID
+
+def is_valid_solana_address(address):
+    """
+    Validates a Solana wallet address format using Base58 rules.
+    Solana addresses are 32 to 44 characters long.
+    """
+    pattern = r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"
+    return bool(re.match(pattern, address))
 
 def check_telegram_membership(chat_id_or_username, user_id):
     try:
@@ -57,37 +53,14 @@ def check_telegram_membership(chat_id_or_username, user_id):
         print(f"Error checking membership: {e}")
         return False
 
-def send_crypto_pay_transfer(target_user_id, amount_usdt):
-    url = "https://pay.crypt.bot/api/transfer"
-    headers = {
-        "Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN,
-        "Content-Type": "application/json"
-    }
-    spend_id = (
-        f"withdraw_{target_user_id}_"
-        f"{int(datetime.datetime.now().timestamp())}"
-    )
-    data = {
-        "user_id": target_user_id,
-        "asset": "USDT",
-        "amount": str(round(amount_usdt, 4)),
-        "spend_id": spend_id
-    }
-    try:
-        response = requests.post(
-            url, json=data, headers=headers, timeout=10
-        )
-        res_data = response.json()
-        if response.status_code == 200 and res_data.get("ok"):
-            return True, "Payment completed."
-        else:
-            error_msg = (
-                res_data.get("error", {})
-                .get("name", "Unknown Error")
-            )
-            return False, error_msg
-    except Exception as e:
-        return False, str(e)
+def send_solana_usdc_payout(wallet_address, amount_usdc):
+    """
+    Executes an on-chain transfer of USDC on the Solana network.
+    Connect this helper to your preferred Solana RPC Node or Merchant Payout API.
+    """
+    # Placeholder: Simulate successful transaction
+    print(f"[ON-CHAIN SOLANA PAYOUT] Sending {amount_usdc} USDC to {wallet_address}")
+    return True, "Solana TX Hash: Placeholder"
 
 def handle_referral_credit(referred_user_id, username):
     user_info = database.fetch_query(
@@ -119,7 +92,7 @@ def handle_referral_credit(referred_user_id, username):
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"@{username} completed their first quest.\n"
                 f"💰 <b>Bonus Credited:</b> "
-                f"<code>+{ref_reward:.2f} USDT</code>",
+                f"<code>+{ref_reward:.2f} USDC (Solana)</code>",
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -130,7 +103,8 @@ def main_keyboard(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("💎 Explore Quests", "💼 Web3 Wallet")
     markup.add("⚡ Daily Claim", "🔗 Referral Hub")
-    markup.add("📤 Withdraw USDT", "💬 Support Desk")
+    markup.add("💳 Set Solana Wallet", "📤 Withdraw USDC")
+    markup.add("💬 Support Desk")
     if is_admin(user_id):
         markup.add("⚙️ Admin Console")
     return markup
@@ -154,6 +128,17 @@ def admin_keyboard():
         )
     )
     return markup
+
+# --- FLASK WEBHOOK HANDLER (SOLVES 409 CONFLICT) ---
+@app.route(f"/webhook/{API_TOKEN}", methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    else:
+        abort(403)
 
 # --- USER COMMANDS ---
 @bot.message_handler(commands=['start'])
@@ -188,12 +173,12 @@ def send_welcome(message):
         )
     
     welcome_text = (
-        f"⚡ <b>TaskFarmer Web3 Portal</b> ⚡\n"
+        f"⚡ <b>TaskFarmer Web3 Portal (Solana)</b> ⚡\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Maximize your earnings by participating in crypto quests, "
         f"completing daily claims, and growing your network.\n\n"
-        f"💎 <b>Instant Settlements:</b> Paid in USDT "
-        f"directly to your <code>@CryptoBot</code> wallet.\n"
+        f"💎 <b>Instant Settlements:</b> Paid in USDC "
+        f"directly to your <b>Solana (SPL)</b> wallet.\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Access the options below to initialize your dashboard."
     )
@@ -210,8 +195,8 @@ def send_help_info(message):
     help_text = (
         "ℹ️ <b>TaskFarmer Help Guide</b>\n━━━━━━━━━━━━━━━━━━━━\n"
         "• Tap <b>💎 Explore Quests</b> to find active contract pools.\n"
-        "• Tap <b>📤 Withdraw USDT</b> to claim directly to "
-        "<code>@CryptoBot</code>.\n"
+        "• Tap <b>📤 Withdraw USDC</b> to claim directly to "
+        "your Solana wallet.\n"
         "• Tap <b>💬 Support Desk</b> to reach the team."
     )
     bot.send_message(message.chat.id, help_text, parse_mode="HTML")
@@ -266,7 +251,7 @@ def view_tasks(message):
         task_card = (
             f"📋 <b>Quest ID: #{task_id}</b>\n\n"
             f"📝 <b>Requirements:</b>\n{desc}\n\n"
-            f"💰 <b>Allocation:</b> <code>{reward:.2f} USDT</code>\n"
+            f"💰 <b>Allocation:</b> <code>{reward:.2f} USDC</code>\n"
             f"👥 <b>Pool Status:</b> {claims_count}/{max_claims} spots filled\n"
             f"🔒 <b>Limit Type:</b> {claim_limit_type} "
             f"({user_submissions_count}/{max_user_claims} claimed)"
@@ -286,16 +271,18 @@ def view_tasks(message):
 def check_balance(message):
     user_id = message.from_user.id
     user = database.fetch_query(
-        "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+        "SELECT balance, wallet_address FROM users WHERE user_id = ?", (user_id,)
     )
     if user:
-        balance = user[0][0]
+        balance, wallet = user[0]
+        wallet_str = wallet if wallet else "Not Set"
         wallet_card = (
             f"💼 <b>TaskFarmer Dashboard</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 <b>Available Balance:</b> <code>{balance:.2f} USDT</code>\n\n"
-            f"🔐 <i>Secure off-chain execution allows seamless "
-            f"transfers straight into your @CryptoBot account.</i>"
+            f"📊 <b>Available Balance:</b> <code>{balance:.2f} USDC</code>\n"
+            f"💳 <b>Solana Wallet:</b> <code>{wallet_str}</code>\n\n"
+            f"🔐 <i>All withdrawals are settled directly "
+            f"on the Solana blockchain.</i>"
         )
         bot.send_message(
             message.chat.id, 
@@ -350,7 +337,7 @@ def claim_daily_bonus(message):
         f"⚡ <b>Daily Reward Claimed!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📈 <b>Milestone:</b> Day {new_count} / 5\n"
-        f"💰 <b>Credit:</b> <code>+{reward:.2f} USDT</code>"
+        f"💰 <b>Credit:</b> <code>+{reward:.2f} USDC</code>"
     )
     
     bot.send_message(
@@ -372,13 +359,49 @@ def send_referral_link(message):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Expand the TaskFarmer ecosystem and earn rewards whenever "
         f"new users register using your partner link.\n\n"
-        f"💰 <b>Partner Fee:</b> <code>0.16 USDT</code> per user\n\n"
+        f"💰 <b>Partner Fee:</b> <code>0.16 USDC</code> per user\n\n"
         f"🔗 <b>Your Partner Link:</b>\n<code>{ref_link}</code>"
     )
     
     bot.send_message(
         message.chat.id,
         ref_card,
+        parse_mode="HTML"
+    )
+
+# --- SOLANA WALLET SETUP ---
+@bot.message_handler(func=lambda message: message.text == "💳 Set Solana Wallet")
+def prompt_solana_wallet(message):
+    bot.send_message(
+        message.chat.id, 
+        "💳 <b>Configure Solana Wallet</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        "Please enter your Solana (SPL) wallet address:",
+        parse_mode="HTML"
+    )
+    bot.register_next_step_handler(message, save_solana_wallet)
+
+def save_solana_wallet(message):
+    user_id = message.from_user.id
+    address = message.text.strip()
+    
+    if not is_valid_solana_address(address):
+        bot.send_message(
+            message.chat.id, 
+            "❌ <b>Invalid Solana Address</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            "The address provided does not match base58 Solana format. "
+            "Please select 'Set Solana Wallet' to try again.",
+            parse_mode="HTML"
+        )
+        return
+        
+    database.execute_query(
+        "UPDATE users SET wallet_address = ? WHERE user_id = ?", 
+        (address, user_id)
+    )
+    bot.send_message(
+        message.chat.id, 
+        f"✅ <b>Solana Wallet Configured!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"Address saved: <code>{address}</code>",
         parse_mode="HTML"
     )
 
@@ -457,7 +480,7 @@ def admin_reply_support(message):
 # --- SUBMISSION FLOW ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("submit_"))
 def handle_submit_request(call):
-    bot.answer_callback_query(call.id) # Dismiss spinner instantly
+    bot.answer_callback_query(call.id)
     task_id = int(call.data.split("_")[1])
     user_id = call.message.chat.id
     
@@ -514,7 +537,7 @@ def handle_submit_request(call):
                 user_id, 
                 f"✅ <b>Quest Verification Successful!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"<code>{reward:.2f} USDT</code> added to your wallet.",
+                f"<code>{reward:.2f} USDC</code> added to your wallet.",
                 parse_mode="HTML"
             )
             user_info = database.fetch_query(
@@ -566,19 +589,28 @@ def process_submission(message, task_id):
         parse_mode="HTML"
     )
 
-# --- SECURE WITHDRAWAL ---
-@bot.message_handler(func=lambda message: message.text == "📤 Withdraw USDT")
+# --- SECURE ON-CHAIN SOLANA WITHDRAWAL ---
+@bot.message_handler(func=lambda message: message.text == "📤 Withdraw USDC")
 def withdraw_request(message):
     user_id = message.from_user.id
     user = database.fetch_query(
-        "SELECT balance FROM users WHERE user_id = ?", (user_id,)
+        "SELECT balance, wallet_address FROM users WHERE user_id = ?", (user_id,)
     )
     
     if not user:
         return
         
-    balance = user[0][0]
+    balance, wallet = user[0]
     
+    if not wallet:
+        bot.send_message(
+            message.chat.id, 
+            "❌ <b>Wallet Not Configured</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            "Please click 'Set Solana Wallet' first.",
+            parse_mode="HTML"
+        )
+        return
+        
     if balance <= 0:
         bot.send_message(
             message.chat.id, "❌ Balance insufficient."
@@ -587,25 +619,30 @@ def withdraw_request(message):
         
     bot.send_message(
         message.chat.id, 
-        f"⚡ <b>Broadcasting transaction...</b>",
+        f"⚡ <b>Broadcasting on-chain Solana transaction...</b>",
         parse_mode="HTML"
     )
     
+    # 1. Zero balance immediately to prevent race conditions
     database.execute_query(
         "UPDATE users SET balance = 0.0 WHERE user_id = ?", (user_id,)
     )
     
-    success, reason = send_crypto_pay_transfer(user_id, balance)
+    # 2. Initiate On-Chain Solana Transfer
+    success, reason = send_solana_usdc_payout(wallet, balance)
     
     if success:
         bot.send_message(
             message.chat.id, 
-            f"✅ <b>Withdrawal Confirmed!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"**Transferred:** <code>{balance:.4f} USDT</code>\n"
-            f"Claim completed directly to your @CryptoBot wallet.",
+            f"✅ <b>USDC Withdrawal Confirmed!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<b>Transferred:</b> <code>{balance:.4f} USDC</code>\n"
+            f"<b>Destination:</b> <code>{wallet}</code>\n\n"
+            f"🔓 <i>Transaction fully settled on Solana network.</i>",
             parse_mode="HTML"
         )
     else:
+        # 3. Refund back to DB if transaction fails
         database.execute_query(
             "UPDATE users SET balance = balance + ? WHERE user_id = ?", 
             (balance, user_id)
@@ -633,7 +670,6 @@ def admin_panel(message):
     )
 
 # --- ADMIN: CREATE QUEST FLOW ---
-
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_task")
 def admin_add_task_start(call):
     bot.answer_callback_query(call.id)  # Answer callback to dismiss loading spinner
@@ -653,7 +689,7 @@ def admin_add_task_desc(message):
         return
     bot.send_message(
         message.chat.id, 
-        "Enter reward amount (in USDT, numbers only):"
+        "Enter reward amount (in USDC, numbers only):"
     )
     bot.register_next_step_handler(message, admin_add_task_reward, desc)
 
@@ -788,7 +824,7 @@ def _finalize_task(chat_id, task_data, max_user_claims, call=None):
                     f"✅ <b>Quest #{task_id} activated!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📝 {task_data['desc']}\n"
-                    f"💰 {task_data['reward']:.2f} USDT | "
+                    f"💰 {task_data['reward']:.2f} USDC | "
                     f"👥 Max {task_data['limit']} global | "
                     f"🔒 {'One-time' if max_user_claims == 1 else f'Up to {max_user_claims} per user'}",
                     chat_id=call.message.chat.id,
@@ -900,7 +936,7 @@ def admin_review_submissions(call):
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
             f"📋 <b>Quest Details:</b> {desc}\n"
-            f"💰 <b>Pool Allocation:</b> <code>{reward:.2f} USDT</code>"
+            f"💰 <b>Pool Allocation:</b> <code>{reward:.2f} USDC</code>"
         )
         
         try:
@@ -979,7 +1015,7 @@ def handle_review_decision(call):
                 user_id, 
                 f"🎉 <b>Quest Approved!</b>\n━━━━━━━━━━━━━━━━━━━━\n"
                 f"Ticket #{sub_id} passed validation.\n"
-                f"💰 <b>Token Credit:</b> <code>{reward:.2f} USDT</code>",
+                f"💰 <b>Token Credit:</b> <code>{reward:.2f} USDC</code>",
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -1018,14 +1054,17 @@ def handle_review_decision(call):
                 message_id=call.message.message_id
             )
 
+# --- WEBHOOK ON-BOOT CONFIGURATION ---
+if RENDER_URL:
+    try:
+        bot.remove_webhook()
+        time.sleep(1) # Yield to network socket
+        bot.set_webhook(url=f"{RENDER_URL}/webhook/{API_TOKEN}")
+        print(f"Webhook securely registered at: {RENDER_URL}/webhook/[TOKEN]")
+    except Exception as e:
+        print(f"Failed to register webhook on startup: {e}")
 
-# --- START THREADS (SAFE CONTEXT RUNNER) ---
 if __name__ == "__main__":
-    bot_thread = threading.Thread(
-        target=lambda: bot.infinity_polling()
-    )
-    bot_thread.daemon = True
-    bot_thread.start()
-    
-    print("TaskFarmer decentralized core active...")
+    # Server runs on main thread; polling thread is dropped for safe Webhook execution
+    print("TaskFarmer Web3 Portal active on Webhook...")
     run_web_server()

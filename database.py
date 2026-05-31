@@ -98,7 +98,6 @@ def execute_query(query, params=()):
         cursor.execute(query, params)
         conn.commit()
         
-        # Capture last row ID across SQL engines safely
         try:
             if DATABASE_URL and "returning" in query.lower():
                 last_id = cursor.fetchone()[0]
