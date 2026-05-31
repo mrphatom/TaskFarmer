@@ -50,6 +50,29 @@ def init_db():
                     status TEXT DEFAULT 'PENDING'
                 )
             ''')
+            conn.commit()
+            
+            # Self-healing Migration: Auto-add missing columns to Postgres
+            try:
+                cursor.execute(
+                    "ALTER TABLE tasks ADD COLUMN max_user_claims "
+                    "INTEGER DEFAULT 1"
+                )
+                conn.commit()
+                print("[MIGRATION] Added max_user_claims to tasks table.")
+            except Exception:
+                conn.rollback()
+
+            try:
+                cursor.execute(
+                    "ALTER TABLE users ADD COLUMN referral_credited "
+                    "INTEGER DEFAULT 0"
+                )
+                conn.commit()
+                print("[MIGRATION] Added referral_credited to users table.")
+            except Exception:
+                conn.rollback()
+
         else:
             # SQLite Schema
             cursor.execute('''
@@ -84,7 +107,27 @@ def init_db():
                     status TEXT DEFAULT 'PENDING'
                 )
             ''')
-        conn.commit()
+            conn.commit()
+            
+            # Self-healing Migration: Auto-add missing columns to SQLite
+            try:
+                cursor.execute(
+                    "ALTER TABLE tasks ADD COLUMN max_user_claims "
+                    "INTEGER DEFAULT 1"
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                cursor.execute(
+                    "ALTER TABLE users ADD COLUMN referral_credited "
+                    "INTEGER DEFAULT 0"
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+                
     finally:
         conn.close()
 
